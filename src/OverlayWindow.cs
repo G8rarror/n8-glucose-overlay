@@ -157,12 +157,12 @@ namespace N8
         public static Bitmap Draw(Settings s, DisplayState state, DateTimeOffset now, float dpiScale)
         {
             float scale = s.ScalePercent / 100f * dpiScale;
-            var bitmap = new Bitmap((int)Math.Ceiling(340 * scale), (int)Math.Ceiling(170 * scale), PixelFormat.Format32bppPArgb);
+            var bitmap = new Bitmap((int)Math.Ceiling(340 * scale), (int)Math.Ceiling(194 * scale), PixelFormat.Format32bppPArgb);
             using (var g = Graphics.FromImage(bitmap))
             {
                 g.Clear(Color.Transparent); g.ScaleTransform(scale, scale);
                 g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-                using (var shape = Rounded(new RectangleF(1, 1, 338, 168), 18))
+                using (var shape = Rounded(new RectangleF(1, 1, 338, 192), 18))
                 {
                     if (s.PanelOpacity > 0)
                     {
@@ -179,12 +179,25 @@ namespace N8
                 Text(g, badge, 238, 14, 9, FontStyle.Bold, accent, 84, 22, StringAlignment.Far);
                 Text(g, r == null ? "—" : r.Value(s.Mmol), 15, 34, 45, FontStyle.Bold, stale ? Color.FromArgb(255, 211, 137) : Color.White, 205, 74);
                 Text(g, r == null ? "?" : r.Arrow, 222, 38, 35, FontStyle.Regular, accent, 102, 62);
-                Text(g, s.Mmol ? "mmol/L" : "mg/dL", 20, 103, 10, FontStyle.Regular, Color.FromArgb(202, 216, 227), 105, 18);
+                string unit = s.Mmol ? "mmol/L" : "mg/dL";
+                string delta = r == null || stale ? null : r.DeltaText(s.Mmol);
+                Text(g, delta == null ? unit : unit + "   " + delta + " / 5m", 20, 103, 10, FontStyle.Regular, Color.FromArgb(202, 216, 227), 160, 18);
+                string forecast = r == null || stale ? null : r.ForecastText(s.Mmol);
+                if (forecast != null) Text(g, "est. " + forecast + " in " + Reading.ForecastMinutes + "m", 180, 103, 10, FontStyle.Regular, Color.FromArgb(160, 178, 192), 142, 18, StringAlignment.Far);
+                // Insulin row: Gluroo's IOB, and how old the newest pump data behind it is.
+                var amber = Color.FromArgb(255, 205, 112);
+                bool iobShown = state.Insulin != null && state.Insulin.IsShowable(now);
+                Text(g, "IOB", 20, 126, 10, FontStyle.Bold, Color.FromArgb(160, 178, 192), 40, 20);
+                Text(g, iobShown ? state.Insulin.IobText() + " u" : "—", 52, 122, 13, FontStyle.Bold, Color.White, 110, 24);
+                TimeSpan? pumpAge = state.PumpData == null ? (TimeSpan?)null : now - state.PumpData.Value;
+                bool pumpLate = pumpAge == null || pumpAge.Value.TotalMinutes > PumpSync.LateMinutes;
+                string pumpText = pumpAge == null ? "pump data age unknown" : "pump data " + (state.PumpDataApprox ? "~" : "") + Age(pumpAge.Value).Replace(" ago", " old");
+                Text(g, pumpText, 160, 127, 9, FontStyle.Regular, pumpLate ? amber : Color.FromArgb(160, 178, 192), 162, 18, StringAlignment.Far);
                 string age = r == null ? "No reading received" : "Read " + r.Time.ToLocalTime().ToString("dd MMM · HH:mm:ss") + "  ·  " + Age(now - r.Time);
-                Text(g, age, 20, 125, 9, FontStyle.Regular, Color.FromArgb(227, 235, 242), 303, 18);
+                Text(g, age, 20, 150, 9, FontStyle.Regular, Color.FromArgb(227, 235, 242), 303, 18);
                 string status = !s.Locked ? "MOVE MODE · drag here · Ctrl+Alt+G to lock" : state.Status;
                 if (stale && s.Locked) status = "STALE · last known reading · " + state.Status;
-                Text(g, status, 20, 147, 8, FontStyle.Regular, accent, 301, 17);
+                Text(g, status, 20, 171, 8, FontStyle.Regular, accent, 301, 17);
             }
             return bitmap;
         }

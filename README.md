@@ -59,8 +59,10 @@ Look under the tray's hidden-icons chevron if you do not see N8. Settings includ
 - **OFFLINE** indicates a failed connection while a retained reading may still be recent. Once old enough, **STALE** takes priority and the connection error remains on the status line.
 - **WAITING** means no reading is available. Unknown trends display `?`, rather than assuming a flat trend.
 - Failed requests and empty results keep the last reading and its original timestamp. Older results cannot replace a newer reading. Future timestamps more than two minutes ahead are rejected; smaller discrepancies say **Clock ahead**.
+- **Delta** (for example `+6 / 5m`) is the change since the previous CGM reading, normalized to five minutes. It is hidden when there is no previous reading within ten minutes.
+- **est. … in 20m** is a straight-line projection of the last 20 minutes of readings. It only knows past CGM values, not insulin, food, or exercise, so it cannot anticipate a turn. It is hidden when there are fewer than three contiguous readings, a gap over 7.5 minutes, a noisy or curving trace, or a stale reading. Values outside the CGM range display as `<40` / `>400`. It is an estimate, not an alert.
 
-The default polling interval is two minutes. Repeated network failures back off to fifteen minutes. Incorrect credentials suspend polling until you enter a changed credential or URL. For 401/403, verify the URL and credential pair or regenerate the connection in Gluroo. HTTP 429 suspends requests until 00:00 UTC the following day; the budget is shared with your other GGC clients. Closing settings, refreshing, and restarting do not bypass the saved cooldown. See [API_COMPATIBILITY.md](API_COMPATIBILITY.md) for the verified contract and testing boundary.
+Polls follow the CGM's 5-minute cycle: the next request is sent about 5 minutes 15 seconds after the newest reading, so a new reading usually appears within a minute. If it is late, the app retries every two minutes (or your polling setting, if longer); with no data or signal loss it checks every 5 minutes. About 300-400 glucose requests per day. Repeated network failures back off to fifteen minutes. Incorrect credentials suspend polling until you enter a changed credential or URL. For 401/403, verify the URL and credential pair or regenerate the connection in Gluroo. HTTP 429 suspends requests until 00:00 UTC the following day; the budget is shared with your other GGC clients. Closing settings, refreshing, and restarting do not bypass the saved cooldown. See [API_COMPATIBILITY.md](API_COMPATIBILITY.md) for the verified contract and testing boundary.
 
 ## Privacy and scope
 
@@ -69,6 +71,20 @@ The app sends a read-only HTTPS request directly to your Gluroo account origin. 
 Use this as a **secondary display only**. It provides no alarms, treatment recommendations, or device control. Use your CGM, pump, or meter directly for medical decisions. GGC is an experimental service and may change or stop responding. N8 is an independent application and is not affiliated with Gluroo.
 
 This is a desktop composited overlay. Exclusive-fullscreen games, secure desktop/UAC prompts, and games that restrict overlays can cover it. Use borderless-windowed mode. It does not inject into games or interact with anti-cheat systems. Specific game compatibility and mixed-DPI hardware have not been manually tested.
+
+## Treatments check (optional, read-only)
+
+Run this to find out whether pump data (boluses, Control-IQ basal changes) reaches Gluroo without anyone entering it by hand, and how far behind it runs. Exit the overlay from the tray first, then run:
+
+```powershell
+.\N8GlucoseOverlay.exe --treatments-check
+```
+
+It uses your saved connection, sends one GET request to Gluroo's documented treatments endpoint, and respects the overlay's two-minute interval and daily limit. It opens a report window and saves the report as `treatments-check.txt` in `%LOCALAPPDATA%\N8GlucoseOverlay`. The report lists record types, counts, record ages and signs of automatic delivery. It never shows dose or carb amounts or notes. Run it a few times on different days to see the typical delay. The overlay itself reads at most five treatment records, only for the pump-data age (see Insulin on board). `--preview` writes `treatments-check-sample.txt` and `.png`, built from mocked data, so you can see the format first.
+
+## Insulin on board
+
+The IOB row shows Gluroo's own insulin-on-board figure (`glurooIob` from `GET /api/v1/devicestatus.json?count=1`), fetched with a glucose poll at most every 10 minutes and hidden once 25 minutes old. It is only as current as the pump data in Gluroo: Tandem's phone app uploads about hourly, so recent boluses may be missing. `pump data Xm old` shows that age, in amber after 75 minutes. On the PC running tconnectsync it is read locally from `%LOCALAPPDATA%\tconnectsync\sync.log`. On other PCs it is estimated from the newest pump basal or bolus in `GET /api/v1/treatments.json?count=5` and marked `~`; it can read older than the truth, never newer. The pump screen is the authoritative IOB.
 
 ## Uninstall
 

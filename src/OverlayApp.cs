@@ -71,24 +71,7 @@ namespace N8
             if (startupError != null && !quiet) MessageBox.Show(startupError, "N8 Glucose Overlay", MessageBoxButtons.OK, MessageBoxIcon.Information);
             if (!Demo && header == null && !quiet) OpenSettings();
         }
-        private Dictionary<string, RateRecord> LoadRates()
-        {
-            if (!File.Exists(ratesPath)) return new Dictionary<string, RateRecord>();
-            try
-            {
-                var value = new JavaScriptSerializer().Deserialize<Dictionary<string, RateRecord>>(File.ReadAllText(ratesPath));
-                if (value == null) throw new FormatException();
-                foreach (var record in value.Values) record.ToPolicy();
-                return value;
-            }
-            catch (Exception)
-            {
-                // An unreadable budget file is not permission to immediately retry.
-                var conservative = new Dictionary<string, RateRecord>();
-                if (!string.IsNullOrEmpty(Config.Server)) conservative[Config.Server] = RateRecord.From(new PollPolicy { Next = DateTimeOffset.UtcNow.AddMinutes(15) });
-                return conservative;
-            }
-        }
+        private Dictionary<string, RateRecord> LoadRates() { return RateFile.Load(ratesPath, Config.Server); }
         private PollPolicy PolicyFor(string server)
         {
             RateRecord record;
@@ -98,10 +81,7 @@ namespace N8
         {
             if (string.IsNullOrEmpty(Config.Server)) return;
             rates[Config.Server] = RateRecord.From(policy);
-            Directory.CreateDirectory(Path.GetDirectoryName(ratesPath));
-            string temp = ratesPath + ".tmp";
-            File.WriteAllText(temp, new JavaScriptSerializer().Serialize(rates));
-            if (File.Exists(ratesPath)) File.Replace(temp, ratesPath, null); else File.Move(temp, ratesPath);
+            RateFile.Save(ratesPath, rates);
         }
         public void ApplySettings(Settings next, bool demo)
         {
@@ -141,13 +121,16 @@ namespace N8
             if (exiting) return;
             seconds++;
             if (seconds % 5 == 0) Overlay.KeepOnTop();
+            if (seconds % 60 == 1) RefreshPumpData();
             var now = DateTimeOffset.UtcNow;
             if (Demo)
             {
                 if (now - demoTime > TimeSpan.FromSeconds(120))
                 {
                     demoTime = now;
-                    Overlay.State.Reading = new Reading { Mgdl = 112, Direction = "Flat", Time = now.AddSeconds(-35) };
+                    Overlay.State.Reading = new Reading { Mgdl = 112, Direction = "Flat", Time = now.AddSeconds(-35), Delta = 2, Forecast = 120 };
+                    Overlay.State.Insulin = new InsulinStatus { Iob = 1.35, Fetched = now };
+                    Overlay.State.PumpData = now.AddMinutes(-23);
                 }
                 Overlay.State.Demo = true; Overlay.State.Status = "SIMULATED · no connection to Gluroo"; Overlay.State.Error = false;
             }
@@ -166,6 +149,8 @@ namespace N8
                     var reading = await client.FetchAsync(Config.Server, header, request.Token);
                     if (exiting || generation != currentGeneration) return;
                     policy.Success(); Overlay.State.Accept(reading);
+                    policy.Schedule(DateTimeOffset.UtcNow, Overlay.State.Reading == null ? (DateTimeOffset?)null : Overlay.State.Reading.Time, Config.PollSeconds);
+                    await RefreshIobAsync(currentGeneration);
                 }
                 catch (OperationCanceledException)
                 {
@@ -200,13 +185,43 @@ namespace N8
             {
                 Overlay.Render();
                 var r = Overlay.State.Reading;
-                string tip = "N8 · " + (Demo ? "DEMO · " : "") + (r == null ? Overlay.State.Status : r.Value(Config.Mmol) + " " + (Config.Mmol ? "mmol/L" : "mg/dL") + " " + r.Arrow + " · " + OverlayWindow.Age(DateTimeOffset.UtcNow - r.Time) + (r.IsStale(DateTimeOffset.UtcNow, Config.StaleMinutes) ? " · STALE" : ""));
+                var ins = Overlay.State.Insulin;
+                string iob = ins != null && ins.IsShowable(DateTimeOffset.UtcNow) ? " · IOB " + ins.IobText() + "u" : "";
+                string tip = "N8 · " + (Demo ? "DEMO · " : "") + (r == null ? Overlay.State.Status : r.Value(Config.Mmol) + " " + (Config.Mmol ? "mmol/L" : "mg/dL") + " " + r.Arrow + iob + " · " + OverlayWindow.Age(DateTimeOffset.UtcNow - r.Time) + (r.IsStale(DateTimeOffset.UtcNow, Config.StaleMinutes) ? " · STALE" : ""));
                 tray.Text = tip.Substring(0, Math.Min(63, tip.Length));
             }
         }
         private void Failure(int status, string message)
         {
             policy.Fail(status, DateTimeOffset.UtcNow); Overlay.State.Error = true; Overlay.State.Status = message;
+        }
+        /// <summary>Second GET in the same poll, at most every IobPollSeconds. A failure only blanks IOB; glucose is unaffected.</summary>
+        private async Task RefreshIobAsync(int currentGeneration)
+        {
+            var known = Overlay.State.Insulin;
+            if (known != null && DateTimeOffset.UtcNow - known.Fetched < TimeSpan.FromSeconds(IobPollSeconds - 5)) return;
+            try
+            {
+                var status = await client.FetchIobAsync(Config.Server, header, request.Token);
+                if (!exiting && generation == currentGeneration && status != null) Overlay.State.Insulin = status;
+                // No tconnectsync on this PC: estimate pump-data age from Gluroo. One more GET per IOB refresh.
+                if (!localPumpLog)
+                {
+                    var pumpTime = await client.FetchPumpDataTimeAsync(Config.Server, header, request.Token);
+                    if (!exiting && generation == currentGeneration && !localPumpLog && pumpTime != null) { Overlay.State.PumpData = pumpTime; Overlay.State.PumpDataApprox = true; }
+                }
+            }
+            catch (ApiException ex) { if (ex.StatusCode == 429 && !exiting && generation == currentGeneration) Failure(429, "Daily API limit · paused until 00:00 UTC"); }
+            catch (Exception) { }
+        }
+        private const int IobPollSeconds = 600;
+        private bool localPumpLog;
+        private void RefreshPumpData()
+        {
+            if (Demo) return;
+            var latest = PumpSync.Read(PumpSync.DefaultFolder);
+            localPumpLog = latest != null;
+            if (latest != null) { Overlay.State.PumpData = latest; Overlay.State.PumpDataApprox = false; }
         }
         private void ToggleVisibility()
         {

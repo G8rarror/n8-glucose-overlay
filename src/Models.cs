@@ -99,6 +99,11 @@ namespace N8
         public int Mgdl;
         public DateTimeOffset Time;
         public string Direction;
+        /// <summary>Change since the previous reading, normalized to mg/dL per 5 minutes. Null without a usable previous reading.</summary>
+        public double? Delta;
+        /// <summary>Projected mg/dL ForecastMinutes after this reading, from a linear fit of recent readings. Null when history is too short, gapped, or noisy.</summary>
+        public double? Forecast;
+        public const int ForecastMinutes = 20;
         public string Arrow { get { return TrendArrow(Direction); } }
         public static string TrendArrow(string direction)
         {
@@ -116,6 +121,62 @@ namespace N8
         }
         public bool IsStale(DateTimeOffset now, int minutes) { return now - Time >= TimeSpan.FromMinutes(minutes); }
         public string Value(bool mmol) { return mmol ? (Mgdl / 18.0182).ToString("0.0", CultureInfo.InvariantCulture) : Mgdl.ToString(CultureInfo.InvariantCulture); }
+        public string DeltaText(bool mmol)
+        {
+            if (Delta == null) return null;
+            double d = mmol ? Delta.Value / 18.0182 : Delta.Value;
+            string text = mmol ? d.ToString("0.0", CultureInfo.InvariantCulture) : Math.Round(d, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture);
+            if (text == "-0" || text == "-0.0") text = text.Substring(1);
+            return (text.StartsWith("-") ? "" : "+") + text;
+        }
+        public string ForecastText(bool mmol)
+        {
+            if (Forecast == null) return null;
+            double f = Forecast.Value;
+            // CGM range is 40-400 mg/dL; never imply precision outside it.
+            if (f < 40) return mmol ? "<2.2" : "<40";
+            if (f > 400) return mmol ? ">22.2" : ">400";
+            return mmol ? (f / 18.0182).ToString("0.0", CultureInfo.InvariantCulture) : Math.Round(f).ToString("0", CultureInfo.InvariantCulture);
+        }
+        /// <summary>Fills Delta and Forecast on readings[0] (newest first, deduplicated).</summary>
+        private static void Analyze(List<Reading> readings)
+        {
+            var newest = readings[0];
+            if (readings.Count >= 2)
+            {
+                double gap = (newest.Time - readings[1].Time).TotalMinutes;
+                if (gap >= 2.5 && gap <= 10) newest.Delta = (newest.Mgdl - readings[1].Mgdl) * 5.0 / gap;
+            }
+            // Contiguous readings within the last 20 minutes of the newest one; any gap over 7.5 minutes ends the window.
+            var window = new List<Reading> { newest };
+            for (int i = 1; i < readings.Count; i++)
+            {
+                if ((window[window.Count - 1].Time - readings[i].Time).TotalMinutes > 7.5) break;
+                if ((newest.Time - readings[i].Time).TotalMinutes > 20.5) break;
+                window.Add(readings[i]);
+            }
+            if (window.Count < 3 || (newest.Time - window[window.Count - 1].Time).TotalMinutes < 9.5) return;
+            // Least-squares line, x in minutes relative to the newest reading.
+            int n = window.Count;
+            double sx = 0, sy = 0, sxx = 0, sxy = 0;
+            foreach (var r in window)
+            {
+                double x = (r.Time - newest.Time).TotalMinutes;
+                sx += x; sy += r.Mgdl; sxx += x * x; sxy += x * r.Mgdl;
+            }
+            double denominator = n * sxx - sx * sx;
+            if (denominator <= 0) return;
+            double slope = (n * sxy - sx * sy) / denominator, intercept = (sy - slope * sx) / n;
+            double squares = 0;
+            foreach (var r in window)
+            {
+                double residual = r.Mgdl - (intercept + slope * (r.Time - newest.Time).TotalMinutes);
+                squares += residual * residual;
+            }
+            // A noisy or curving trace makes a straight-line projection misleading, so show nothing.
+            if (Math.Sqrt(squares / n) > 6) return;
+            newest.Forecast = intercept + slope * ForecastMinutes;
+        }
         public static Reading Parse(string json, DateTimeOffset now)
         {
             object parsed;
@@ -145,7 +206,13 @@ namespace N8
                 readings.Add(new Reading { Mgdl = sgv, Time = time, Direction = direction });
             }
             if (array.Length > 0 && readings.Count == 0) throw new FormatException("No valid CGM entry or timestamp.");
-            return readings.OrderByDescending(r => r.Time).FirstOrDefault();
+            if (readings.Count == 0) return null;
+            // Newest first; drop duplicate uploads of the same sensor reading (within 30 seconds).
+            var ordered = new List<Reading>();
+            foreach (var r in readings.OrderByDescending(r => r.Time))
+                if (ordered.Count == 0 || (ordered[ordered.Count - 1].Time - r.Time).TotalSeconds >= 30) ordered.Add(r);
+            Analyze(ordered);
+            return ordered[0];
         }
         private static bool TryTime(Dictionary<string, object> entry, out DateTimeOffset time)
         {
@@ -171,6 +238,12 @@ namespace N8
         public string Status = "Set up Gluroo from the tray";
         public bool Error;
         public bool Demo;
+        /// <summary>Gluroo IOB; null until fetched. Not shown once older than InsulinStatus.MaxShowMinutes.</summary>
+        public InsulinStatus Insulin;
+        /// <summary>Newest pump event Tandem holds, from the local tconnectsync log; null if unknown.</summary>
+        public DateTimeOffset? PumpData;
+        /// <summary>True when PumpData came from Gluroo's treatments (approximate, may read older) rather than the local tconnectsync log.</summary>
+        public bool PumpDataApprox;
         public void Accept(Reading reading)
         {
             Error = false;

@@ -77,6 +77,58 @@ namespace N8
                 Reject(delegate { Reading.Parse("[{\"sgv\":100}]", now); }, "Missing timestamp rejected");
                 Reject(delegate { Reading.Parse("[{\"sgv\":100,\"dateString\":\"2099-01-01T00:00:00Z\"}]", now); }, "Future timestamp rejected");
                 Check(Reading.Parse("[{\"sgv\":90,\"date\":" + (ms - 60000) + "},{\"sgv\":110,\"date\":" + ms + "}]", now).Mgdl == 110, "Newest valid reading selected independent of order");
+                Func<int[], int, string> series = delegate(int[] values, int stepMinutes)
+                {
+                    // values[0] is newest
+                    var parts = new List<string>();
+                    for (int i = 0; i < values.Length; i++) parts.Add("{\"sgv\":" + values[i] + ",\"date\":" + (ms - i * stepMinutes * 60000L) + "}");
+                    return "[" + string.Join(",", parts) + "]";
+                };
+                var rising = Reading.Parse(series(new[] { 130, 120, 110, 100, 90, 80 }, 5), now);
+                Check(rising.Delta == 10 && rising.DeltaText(false) == "+10", "Delta is change since previous reading");
+                Check(rising.Forecast.HasValue && Math.Abs(rising.Forecast.Value - 170) < 0.01 && rising.ForecastText(false) == "170", "Steady rise of 2 mg/dL/min projects +40 in 20 minutes");
+                Check(rising.ForecastText(true) == "9.4" && rising.DeltaText(true) == "+0.6", "Delta and forecast convert to mmol/L");
+                var falling = Reading.Parse(series(new[] { 60, 75, 90, 105, 120 }, 5), now);
+                Check(falling.DeltaText(false) == "-15" && falling.ForecastText(false) == "<40", "Projection below CGM range shown as <40");
+                Check(Reading.Parse(series(new[] { 100, 100, 100, 100 }, 5), now).DeltaText(false) == "+0", "Flat delta");
+                Check(Reading.Parse(series(new[] { 110, 100 }, 10), now).Delta == 5, "Delta normalized to 5 minutes across a missed reading");
+                var gapped = Reading.Parse(series(new[] { 110, 100 }, 15), now);
+                Check(gapped.Delta == null && gapped.Forecast == null, "No delta or forecast across a long gap");
+                Check(Reading.Parse(series(new[] { 110, 105 }, 5), now).Forecast == null, "Forecast needs at least three readings over ten minutes");
+                Check(Reading.Parse("[{\"sgv\":110,\"date\":" + ms + "},{\"sgv\":105,\"date\":" + (ms - 600000) + "},{\"sgv\":100,\"date\":" + (ms - 1500000) + "}]", now).Forecast == null, "Forecast window stops at a gap over 7.5 minutes");
+                Check(Reading.Parse(series(new[] { 100, 140, 95, 135 }, 5), now).Forecast == null, "Noisy trace suppresses forecast");
+                var duplicated = Reading.Parse("[{\"sgv\":120,\"date\":" + ms + "},{\"sgv\":120,\"date\":" + (ms - 5000) + "},{\"sgv\":110,\"date\":" + (ms - 300000) + "}]", now);
+                Check(duplicated.Delta == 10, "Duplicate uploads of one reading ignored for delta");
+                Check(Reading.Parse("[{\"sgv\":100,\"date\":" + ms + "}]", now).Delta == null, "Single reading has no delta");
+                var treatments = TreatmentSummary.Parse(SampleTreatments(now), now);
+                string treatmentReport = treatments.Report(now);
+                Check(treatments.Total == 16 && treatments.TempBasals == 12 && treatments.WithInsulin == 3, "Treatments summary counts record types");
+                Check(treatments.MentionsAutomatic >= 1 && treatments.MarkedAutomatic == 1 && treatments.FromTandem == 16, "Treatments summary detects automatic and Tandem records");
+                Check(Math.Abs((treatments.Newest.Value - now.AddMinutes(-70)).TotalSeconds) < 1 && treatments.LastHour == 0 && treatments.Last3Hours == 16 && treatments.MedianGapMinutes == 5, "Treatments summary measures data lag and spacing");
+                Check(!treatmentReport.Contains("1.37") && !treatmentReport.Contains("0.85") && !treatmentReport.Contains("private note") && !treatmentReport.Contains("parent@example"), "Treatments report omits doses, notes and email addresses");
+                Check(treatmentReport.Contains("without anyone entering it") && treatmentReport.Contains("1 h 10 min ago"), "Treatments report explains automatic data and lag");
+                var stale = TreatmentSummary.Parse("[{\"eventType\":\"Temp Basal\",\"rate\":1,\"date\":" + (ms - 3 * 3600000L) + "}]", now);
+                Check(stale.Report(now).Contains("over 90 minutes"), "Old pump data flagged as lagging");
+                var manualOnly = TreatmentSummary.Parse("[{\"eventType\":\"Meal Bolus\",\"insulin\":2,\"created_at\":\"2026-10-15T17:40:00Z\",\"enteredBy\":\"Gluroo\"}]", now);
+                Check(manualOnly.TempBasals == 0 && manualOnly.Report(now).Contains("nothing looks automatic"), "Manual-only treatments flagged as not automatic");
+                Check(TreatmentSummary.Parse("[]", now).Report(now).Contains("No treatments came back"), "Empty treatments explained");
+                Reject(delegate { TreatmentSummary.Parse("{\"status\":401}", now); }, "Unexpected treatments shape rejected");
+                var iob = InsulinStatus.Parse("[{\"glurooIob\":1.35,\"glurooCob\":0}]", now);
+                Check(iob.Iob == 1.35 && iob.IobText() == "1.35" && iob.Fetched == now, "Gluroo IOB parsed from devicestatus");
+                Check(InsulinStatus.Parse("{\"glurooIob\":\"0\",\"glurooCob\":0}", now).IobText() == "0.00", "IOB accepted as object and string, zero kept as zero");
+                Check(InsulinStatus.Parse("[{\"device\":\"loop\"}]", now) == null && InsulinStatus.Parse("[]", now) == null, "Missing IOB is unknown, not zero");
+                Reject(delegate { InsulinStatus.Parse("[{\"glurooIob\":500}]", now); }, "Implausible IOB rejected");
+                Check(iob.IsShowable(now.AddMinutes(24)) && !iob.IsShowable(now.AddMinutes(25)), "IOB hidden once 25 minutes old");
+                string log = "2026-11-20 07:46:09 INFO     New reported tandemsource data. (cur_max_date: 1795177996.0 last_max_date: 1795173821.0)\n" +
+                    "2026-11-20 08:36:21 INFO     No new reported tandemsource data. cur_max_date: 2026-11-20T11:00:00+00:00 (63m ago) last_event_time: 2026-11-20T13:46:06.559715+00:00 (50m ago)\n";
+                Check(PumpSync.Latest(log) == new DateTimeOffset(2026, 11, 20, 12, 33, 16, TimeSpan.Zero), "Pump data time read from both tconnectsync log formats, newest wins, last_event_time ignored");
+                Check(PumpSync.Latest("nothing here") == null && PumpSync.Read(Path.Combine(folder, "no-such-folder")) == null, "Missing tconnectsync log means unknown pump data age");
+                string glurooPump = "[{\"eventType\":\"Carb Correction\",\"created_at\":\"2026-10-15T17:58:00Z\",\"enteredBy\":\"parent\"}," +
+                    "{\"eventType\":\"Correction Bolus\",\"created_at\":\"2026-10-15T17:59:00Z\",\"enteredBy\":\"parent\"}," +
+                    "{\"eventType\":\"Temp Basal\",\"created_at\":\"2026-10-15T17:38:50.000Z\",\"enteredBy\":\"System\"}," +
+                    "{\"eventType\":\"Combo Bolus\",\"created_at\":\"2026-10-15T17:20:00Z\",\"enteredBy\":\"System\"}]";
+                Check(PumpSync.NewestPumpTreatment(glurooPump, now) == new DateTimeOffset(2026, 10, 15, 17, 38, 50, TimeSpan.Zero), "Gluroo fallback uses newest pump basal/bolus, ignores hand-entered records");
+                Check(PumpSync.NewestPumpTreatment("[]", now) == null, "No pump treatments means unknown pump data age");
                 reading.Time = now.AddMinutes(-10);
                 Check(reading.IsStale(now, 10) && !reading.IsStale(now.AddSeconds(-1), 10), "Staleness boundary uses reading time");
                 Check(OverlayWindow.Age(TimeSpan.FromSeconds(-1)) == "Clock ahead", "Future clock discrepancy made visible");
@@ -88,6 +140,18 @@ namespace N8
                 Check(policy.Next == midnight && !policy.CanPoll(midnight.AddSeconds(-1)), "429 pauses until next UTC day");
                 Check(RateRecord.From(policy).ToPolicy().Next == midnight, "Daily rate pause can survive restart");
                 policy = new PollPolicy(); policy.Fail(503, now); policy.Fail(503, now); Check(policy.Next == now.AddSeconds(240), "Transient failures use exponential backoff");
+                policy = new PollPolicy(); policy.Begin(now, 120); policy.Schedule(now, now.AddSeconds(-30), 120);
+                Check(policy.Next == now.AddSeconds(285), "On-time reading: next poll 5m15s after the reading");
+                policy = new PollPolicy(); policy.Begin(now, 120); policy.Schedule(now, now.AddSeconds(-330), 120);
+                Check(policy.Next == now.AddSeconds(120), "Late reading: retry at the 120 s floor");
+                policy = new PollPolicy(); policy.Begin(now, 120); policy.Schedule(now, now.AddSeconds(-280), 300);
+                Check(policy.Next == now.AddSeconds(300), "PollSeconds setting is never undercut");
+                policy = new PollPolicy(); policy.Begin(now, 120); policy.Schedule(now, now.AddSeconds(90), 120);
+                Check(policy.Next == now.AddSeconds(360), "Future-dated reading capped at 6 minutes");
+                policy = new PollPolicy(); policy.Begin(now, 120); policy.Schedule(now, now.AddMinutes(-40), 120);
+                Check(policy.Next == now.AddSeconds(300), "Signal loss falls back to 5 minutes");
+                policy = new PollPolicy(); policy.Begin(now, 120); policy.Schedule(now, null, 120);
+                Check(policy.Next == now.AddSeconds(300) && !policy.CanPoll(now.AddSeconds(299)), "No data falls back to 5 minutes");
                 HttpTests(header).GetAwaiter().GetResult();
                 using (var image = OverlayWindow.Draw(new Settings(), new DisplayState { Reading = reading }, now, 1))
                     Check(image.GetPixel(0, 0).A == 0 && image.GetPixel(170, 115).A > 0, "Per-pixel transparent corners and translucent panel");
@@ -107,11 +171,29 @@ namespace N8
         {
             var stub = new Stub { Respond = delegate(HttpRequestMessage request)
             {
-                Check(request.Method == HttpMethod.Get && request.RequestUri.AbsoluteUri == "https://test.ns.gluroo.com/api/v1/entries.json?count=1", "Read-only documented JSON endpoint");
+                Check(request.Method == HttpMethod.Get && request.RequestUri.AbsoluteUri == "https://test.ns.gluroo.com/api/v1/entries.json?count=6", "Read-only documented JSON endpoint");
                 Check(string.Join("", request.Headers.GetValues("api-secret")) == header && !request.RequestUri.Query.Contains(header), "Credential sent only in api-secret header");
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("[{\"sgv\":123,\"dateString\":\"2026-10-15T00:00:00Z\",\"trend\":4}]") };
             } };
             using (var client = new GlurooClient(stub)) Check((await client.FetchAsync("https://test.ns.gluroo.com", header, CancellationToken.None)).Mgdl == 123, "HTTP parsing integration");
+            var treatmentsStub = new Stub { Respond = delegate(HttpRequestMessage request)
+            {
+                Check(request.Method == HttpMethod.Get && request.RequestUri.AbsoluteUri == "https://test.ns.gluroo.com/api/v1/treatments.json?count=100" && request.Content == null, "Treatments check is a single read-only GET of the documented endpoint");
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("[]") };
+            } };
+            using (var client = new GlurooClient(treatmentsStub)) Check(await client.FetchTreatmentsJsonAsync("https://test.ns.gluroo.com", header, CancellationToken.None) == "[]", "Treatments response returned for local summary");
+            var iobStub = new Stub { Respond = delegate(HttpRequestMessage request)
+            {
+                Check(request.Method == HttpMethod.Get && request.RequestUri.AbsoluteUri == "https://test.ns.gluroo.com/api/v1/devicestatus.json?count=1" && request.Content == null, "IOB is a single read-only GET of the documented devicestatus endpoint");
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("[{\"glurooIob\":0.4,\"glurooCob\":0}]") };
+            } };
+            using (var client = new GlurooClient(iobStub)) Check((await client.FetchIobAsync("https://test.ns.gluroo.com", header, CancellationToken.None)).Iob == 0.4, "IOB HTTP parsing integration");
+            var pumpStub = new Stub { Respond = delegate(HttpRequestMessage request)
+            {
+                Check(request.Method == HttpMethod.Get && request.RequestUri.AbsoluteUri == "https://test.ns.gluroo.com/api/v1/treatments.json?count=5" && request.Content == null, "Pump-data fallback is a single small read-only GET of treatments");
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("[{\"eventType\":\"Temp Basal\",\"created_at\":\"2026-10-15T00:00:00Z\",\"enteredBy\":\"System\"}]") };
+            } };
+            using (var client = new GlurooClient(pumpStub)) Check((await client.FetchPumpDataTimeAsync("https://test.ns.gluroo.com", header, CancellationToken.None)) == new DateTimeOffset(2026, 10, 15, 0, 0, 0, TimeSpan.Zero), "Pump-data fallback HTTP integration");
             foreach (int status in new[] { 401, 429, 302, 503 })
             {
                 using (var client = new GlurooClient(new Stub { Respond = delegate { return new HttpResponseMessage((HttpStatusCode)status) { Content = new StringContent("not JSON") }; } }))
@@ -129,12 +211,39 @@ namespace N8
                 Check(failed, "Oversized response rejected");
             }
         }
+        /// <summary>Mock Control-IQ-like treatments: temp basals every 5 minutes, an automatic correction, a manual bolus. Newest 70 minutes old.</summary>
+        internal static string SampleTreatments(DateTimeOffset now)
+        {
+            var parts = new List<string>();
+            Func<int, string> at = delegate(int minutesAgo) { return now.AddMinutes(-minutesAgo).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", System.Globalization.CultureInfo.InvariantCulture); };
+            for (int i = 0; i < 12; i++)
+                parts.Add("{\"eventType\":\"Temp Basal\",\"rate\":0.85,\"absolute\":0.85,\"duration\":5,\"created_at\":\"" + at(70 + i * 5) + "\",\"enteredBy\":\"Gluroo Tandem\"}");
+            parts.Add("{\"eventType\":\"Correction Bolus\",\"insulin\":1.37,\"automatic\":true,\"notes\":\"Control-IQ technology automatic correction bolus\",\"created_at\":\"" + at(95) + "\",\"enteredBy\":\"Gluroo Tandem\"}");
+            parts.Add("{\"eventType\":\"Meal Bolus\",\"insulin\":1.37,\"carbs\":30,\"notes\":\"private note\",\"created_at\":\"" + at(120) + "\",\"enteredBy\":\"Gluroo Tandem\"}");
+            parts.Add("{\"eventType\":\"Bolus\",\"insulin\":0.85,\"created_at\":\"" + at(150) + "\",\"enteredBy\":\"parent@example.com via Tandem\"}");
+            parts.Add("{\"eventType\":\"Note\",\"notes\":\"private note\",\"created_at\":\"" + at(160) + "\",\"enteredBy\":\"Tandem\"}");
+            parts.Reverse();
+            return "[" + string.Join(",", parts) + "]";
+        }
         public static int Preview(string[] args)
         {
             string folder = Folder(args);
             var now = DateTimeOffset.UtcNow;
-            var state = new DisplayState { Reading = new Reading { Mgdl = 112, Direction = "Flat", Time = now.AddMinutes(-2) }, Status = "Gluroo connected · click-through locked" };
+            string sampleReport = "SAMPLE FROM MOCKED DATA, NOT YOUR ACCOUNT" + Environment.NewLine + Environment.NewLine + TreatmentSummary.Parse(SampleTreatments(now), now).Report(now);
+            File.WriteAllText(Path.Combine(folder, "treatments-check-sample.txt"), sampleReport, new UTF8Encoding(false));
+            using (var form = new Form { Width = 720, Height = 640, FormBorderStyle = FormBorderStyle.FixedSingle, StartPosition = FormStartPosition.Manual, Location = new Point(-2000, -2000), ShowInTaskbar = false })
+            using (var box = new TextBox { Multiline = true, ReadOnly = true, WordWrap = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), Text = sampleReport.Replace("\r\n", "\n").Replace("\n", "\r\n"), BackColor = SystemColors.Window })
+            {
+                form.Controls.Add(box); form.CreateControl(); box.CreateControl();
+                using (var bitmap = new Bitmap(box.Width, box.Height)) { box.DrawToBitmap(bitmap, new Rectangle(0, 0, box.Width, box.Height)); bitmap.Save(Path.Combine(folder, "treatments-check-sample.png"), ImageFormat.Png); }
+            }
+            var state = new DisplayState { Reading = new Reading { Mgdl = 112, Direction = "Flat", Time = now.AddMinutes(-2), Delta = -4, Forecast = 96 }, Status = "Gluroo connected · click-through locked",
+                Insulin = new InsulinStatus { Iob = 1.35, Fetched = now }, PumpData = now.AddMinutes(-23) };
             SaveImage(folder, "overlay-current.png", new Settings(), state, now);
+            SaveImage(folder, "overlay-current-mmol.png", new Settings { Mmol = true }, state, now);
+            state.PumpData = now.AddMinutes(-88);
+            SaveImage(folder, "overlay-pump-late.png", new Settings(), state, now);
+            state.PumpData = now.AddMinutes(-23);
             state.Reading.Time = now.AddMinutes(-17); state.Error = true; state.Status = "Connection unavailable · retry scheduled";
             SaveImage(folder, "overlay-stale.png", new Settings(), state, now);
             state.Demo = true; state.Error = false; state.Reading.Time = now.AddSeconds(-35); state.Status = "SIMULATED · no connection to Gluroo";

@@ -10,13 +10,14 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("A secondary Gluroo glucose display for Windows")]
 [assembly: AssemblyCompany("N8")]
 [assembly: AssemblyProduct("N8 Glucose Overlay")]
-[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
 
 namespace N8
 {
     internal static class Program
     {
         [DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+        internal static string MutexName() { return "Local\\N8GlucoseOverlay-" + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value; }
         [STAThread]
         private static int Main(string[] args)
         {
@@ -25,8 +26,9 @@ namespace N8
             if (args.Contains("--self-test")) return Verification.Run(args);
             if (args.Contains("--preview")) return Verification.Preview(args);
             if (args.Contains("--smoke-test")) return Verification.Smoke(args);
+            if (args.Contains("--treatments-check")) return TreatmentsCheck.Run(args);
             bool created;
-            using (var mutex = new Mutex(true, "Local\\N8GlucoseOverlay-" + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value, out created))
+            using (var mutex = new Mutex(true, MutexName(), out created))
             {
                 if (!created) { MessageBox.Show("N8 Glucose Overlay is already running. Open it from the system tray (including hidden icons).", "N8 Glucose Overlay"); return 0; }
                 try
