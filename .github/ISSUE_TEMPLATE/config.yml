@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Gluroo support
+    url: https://gluroo.com
+    about: Problems with readings in the Gluroo app itself
+  - name: tconnectsync
+    url: https://github.com/jwoglom/tconnectsync/issues
+    about: Problems syncing Tandem Source data (not specific to N8)

@@ -1,20 +1,40 @@
 # N8 Glucose Overlay
 
-A small native Windows 11 application displaying Gluroo Global Connect glucose readings over your desktop and borderless-windowed games. It includes a transparent, always-on-top, click-through overlay, tray controls, trend arrows, local measurement timestamps, continuously updated reading age, and visible stale/offline states.
+A small native Windows 11 application displaying Gluroo Global Connect glucose readings over your desktop and borderless-windowed games. It includes a transparent, always-on-top, click-through overlay, tray controls, trend arrows, change per 5 minutes, a 20-minute estimate, insulin on board (IOB), local measurement timestamps, continuously updated reading age, and visible stale/offline states.
 
-[Download the Windows release](https://github.com/G8rarror/n8-glucose-overlay/releases/tag/v1.0.0)
+[Download the latest Windows release](https://github.com/G8rarror/n8-glucose-overlay/releases/latest)
 
 ![N8 Glucose Overlay displaying simulated data](docs/overlay-demo.png)
 
+> **Secondary display only.** N8 shows data that may be minutes (glucose) or about an hour (pump data) old. It has no alarms and gives no treatment advice. Use the CGM, pump, or meter for every medical decision. N8 is an independent project, not affiliated with Gluroo, Dexcom, or Tandem.
+
+## What you need
+
+- A Windows 11 PC (Windows 10 with .NET Framework 4.8 should also work but is untested). Nothing else to install.
+- A [Gluroo](https://gluroo.com) account receiving CGM readings (for example from a Dexcom G7), with **Gluroo Global Connect / Nightscout** access turned on.
+- Optional, for the IOB row: pump data reaching Gluroo. See [docs/PUMP_DATA.md](docs/PUMP_DATA.md).
+
+## Quick start
+
+1. Download the **N8-Glucose-Overlay** ZIP from [Releases](https://github.com/G8rarror/n8-glucose-overlay/releases/latest) and extract it (right-click → **Extract All**).
+2. Double-click **N8GlucoseOverlay.exe**. If Windows shows **"Windows protected your PC"**, click **More info → Run anyway** (see [Windows warning](#windows-warning)).
+3. In Gluroo on your phone, find your Nightscout URL and **API Secret Token** (details below).
+4. Paste both into N8's Settings window and click **Save & connect**.
+5. Drag the overlay where you want it (`Ctrl+Alt+G` toggles move mode), then lock it. Run **Install.cmd** if you want a Start menu entry.
+
 ## Run
 
-1. Extract **N8-Glucose-Overlay-1.0.0.zip** to a folder you can write to.
+1. Extract the **N8-Glucose-Overlay** ZIP to a folder you can write to.
 2. Double-click **N8GlucoseOverlay.exe**. No administrator rights are needed.
 3. In Gluroo, open **Connections → DIY / Nightscout (Loop)** and generate or copy your Nightscout URL and credential. Some versions place this under Settings → Gluroo Global Connect Nightscout.
 4. Paste the exact base URL, such as `https://your-id.ns.gluroo.com`, into Settings. Paste the **API Secret Token** with the plain format selected, or choose **API Secret Header (SHA-1)** and paste its 40-character value.
 5. Select **Save & connect**. The first request starts within a second when permitted by the request cooldown. If Gluroo has readings, the overlay displays the latest one. If it is empty, confirm readings are reaching Gluroo on your phone.
 
-The Windows 11 built-in .NET Framework 4.8/4.8.1 is used. No SDK, Node, Python, WebView, account registration, or separate hosting is required to run the release. The executable is unsigned; Windows may show its normal publisher/reputation prompt. Review the included source and build locally if preferred.
+The Windows 11 built-in .NET Framework 4.8/4.8.1 is used. No SDK, Node, Python, WebView, account registration, or separate hosting is required to run the release.
+
+### Windows warning
+
+The executable is not code-signed, so Windows SmartScreen may say **"Windows protected your PC"** the first time. Click **More info**, check the app name is `N8GlucoseOverlay.exe`, and click **Run anyway**. If you prefer, compare the ZIP against the `.sha256` file on the release page (`Get-FileHash .\N8-Glucose-Overlay-<version>.zip`), or review the source and [build it yourself](#build-from-source).
 
 To try the layout without credentials, check **Offline demo** in Settings, or run:
 
@@ -84,7 +104,31 @@ It uses your saved connection, sends one GET request to Gluroo's documented trea
 
 ## Insulin on board
 
-The IOB row shows Gluroo's own insulin-on-board figure (`glurooIob` from `GET /api/v1/devicestatus.json?count=1`), fetched with a glucose poll at most every 10 minutes and hidden once 25 minutes old. It is only as current as the pump data in Gluroo: Tandem's phone app uploads about hourly, so recent boluses may be missing. `pump data Xm old` shows that age, in amber after 75 minutes. On the PC running tconnectsync it is read locally from `%LOCALAPPDATA%\tconnectsync\sync.log`. On other PCs it is estimated from the newest pump basal or bolus in `GET /api/v1/treatments.json?count=5` and marked `~`; it can read older than the truth, never newer. The pump screen is the authoritative IOB.
+The IOB row shows Gluroo's own insulin-on-board figure (`glurooIob` from `GET /api/v1/devicestatus.json?count=1`), fetched with a glucose poll at most every 10 minutes and hidden once 25 minutes old. It needs pump data in Gluroo; [docs/PUMP_DATA.md](docs/PUMP_DATA.md) explains how to get Tandem pump data there, either with Gluroo's built-in Tandem connection or with [tconnectsync](https://github.com/jwoglom/tconnectsync) and the helper scripts in [`tools/tconnectsync`](tools/tconnectsync). It is only as current as the pump data in Gluroo: Tandem's phone app uploads about hourly, so recent boluses may be missing. `pump data Xm old` shows that age, in amber after 75 minutes. On the PC running tconnectsync it is read locally from `%LOCALAPPDATA%\tconnectsync\sync.log`. On other PCs it is estimated from the newest pump basal or bolus in `GET /api/v1/treatments.json?count=5` and marked `~`; it can read older than the truth, never newer. The pump screen is the authoritative IOB.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| No overlay visible | Look for the N8 icon under the tray's hidden-icons chevron. Use tray → **Move to primary display**, or `Ctrl+Alt+H` in case it is hidden. |
+| **WAITING**, or "check Gluroo URL" | Confirm readings appear in the Gluroo app. Check the URL is the base address only (`https://your-id.ns.gluroo.com`), with no path or token. |
+| "Authentication failed · update credentials" | The URL and token must come from the same Gluroo connection. Paste the plain **API Secret Token** with the plain format selected, or the 40-character hex value with **SHA-1** selected. |
+| **STALE** | Gluroo has no new reading. Check the phone running the CGM app has signal and is uploading. |
+| **OFFLINE** | The PC cannot reach Gluroo. It retries automatically, backing off up to 15 minutes. |
+| "Daily API limit · paused until 00:00 UTC" | Gluroo's daily request limit (shared by every app using your Gluroo account) was reached. Fewer PCs or a longer polling interval helps. |
+| IOB row missing | Gluroo has no IOB yet (no pump data), or IOB has not refreshed in 25 minutes. See [docs/PUMP_DATA.md](docs/PUMP_DATA.md). |
+| IOB shows 0.00 after a bolus | Pump uploads are about hourly; wait for the next one. If it stays 0, set **Rapid Acting** insulin in Gluroo's insulin settings. |
+| "pump data age unknown" or amber age | No pump record found, or none in 75 minutes. Check the phone's Tandem app is running, and run `upload-gaps.ps1` if you use tconnectsync. |
+| Hidden behind a game | Switch the game to borderless-windowed. Exclusive fullscreen covers every overlay. |
+| "Windows protected your PC" | See [Windows warning](#windows-warning). |
+
+## Consoles, Mac, and phones
+
+N8 is Windows-only. Xbox, PlayStation, and Switch do not allow third-party overlays over games. You can still see N8 while playing console games by streaming the console to a Windows PC (the Xbox app or PS Remote Play) in a window, which puts N8 on top as with any PC game. On phones and watches, use the Gluroo and Dexcom apps directly.
+
+## Contributing and feedback
+
+Bug reports and ideas are welcome through [Issues](https://github.com/G8rarror/n8-glucose-overlay/issues). Please never post your Gluroo URL, token, Tandem login, or screenshots showing them. Pull requests should keep the app read-only and pass `package.cmd`. Licensed under the [MIT License](LICENSE).
 
 ## Uninstall
 

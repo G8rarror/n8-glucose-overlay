@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in N8 Glucose Overlay is not working
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste your Gluroo URL, API token, Tandem login, or screenshots that show them.** Replace them with `your-id` / `REDACTED`.
+        N8 is a secondary display only. For anything urgent about glucose or insulin, use the CGM, pump, or meter.
+  - type: input
+    id: version
+    attributes:
+      label: N8 version
+      description: Tray → Settings → About
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: input
+    id: status
+    attributes:
+      label: Status line text on the overlay
+      placeholder: "Connection unavailable · retry scheduled"
+  - type: dropdown
+    id: pump
+    attributes:
+      label: How does pump data reach Gluroo? (only for IOB issues)
+      options:
+        - Not using IOB
+        - Gluroo's built-in Tandem connection
+        - tconnectsync
+        - Other / not sure

@@ -1,0 +1,13 @@
+name: Idea or feature request
+description: Suggest something that would make N8 more useful
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: "N8 stays read-only: it will not control a pump, change therapy settings, or replace CGM alarms."
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like N8 to do, and when would it help?
+    validations:
+      required: true
