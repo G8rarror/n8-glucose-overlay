@@ -21,6 +21,7 @@ class TrendTest {
         assertTrue(r.rate!! > 1.6 && r.rate!! < 2.2)
         assertEquals("+10 / 5m", Format.delta(r, false))
         assertTrue(Format.estimate(r, true)!!.contains("–"))
+        assertTrue(Regex("^est\\. ~\\d+ \\(\\d+–\\d+\\) in 20m$").matches(Format.estimate(r, false)!!))
     }
 
     @Test fun fallingBelowRange() {

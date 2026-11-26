@@ -150,6 +150,15 @@ namespace N8
             if (f > 400) return mmol ? ">22.2" : ">400";
             return mmol ? (f / 18.0182).ToString("0.0", CultureInfo.InvariantCulture) : Math.Round(f).ToString("0", CultureInfo.InvariantCulture);
         }
+        /// <summary>"est. ~178 (150–205) in 20m": the middle estimate first, then its range. Null when there is no estimate.</summary>
+        public string EstimateText(bool mmol)
+        {
+            if (Forecast == null || ForecastLow == null || ForecastHigh == null) return Noisy ? "est. — noisy readings" : null;
+            string middle = ForecastText(mmol), tail = " in " + ForecastMinutes + "m";
+            // Outside the CGM's 40-400 range the middle is already "<40" or ">400"; a range adds nothing.
+            if (middle.StartsWith("<") || middle.StartsWith(">")) return "est. " + middle + tail;
+            return "est. ~" + middle + " (" + RangeText(mmol) + ")" + tail;
+        }
         /// <summary>"150–175", clamped to the 40-400 CGM range. Null without a range.</summary>
         public string RangeText(bool mmol)
         {

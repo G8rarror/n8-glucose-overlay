@@ -184,7 +184,12 @@ object Format {
             lo > 400 -> if (mmol) ">22.2" else ">400"
             else -> (if (lo < 40) "<" + num(40.0, mmol) else num(lo, mmol)) + "–" + (if (hi > 400) ">" + num(400.0, mmol) else num(hi, mmol))
         }
-        return "est. $range in ${Reading.FORECAST_MINUTES}m"
+        val tail = " in ${Reading.FORECAST_MINUTES}m"
+        val mid = r.forecast!!
+        // Outside the CGM's 40-400 range the middle says it all; otherwise middle first, then the range.
+        if (mid < 40) return "est. " + (if (mmol) "<2.2" else "<40") + tail
+        if (mid > 400) return "est. " + (if (mmol) ">22.2" else ">400") + tail
+        return "est. ~${num(mid, mmol)} ($range)$tail"
     }
 
     fun threshold(r: Reading, mmol: Boolean): String? {

@@ -66,7 +66,7 @@ object Gluroo {
             connection.readTimeout = 15_000
             connection.setRequestProperty("api-secret", header)
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "N8GlucoseAndroid/1.0.1")
+            connection.setRequestProperty("User-Agent", "N8GlucoseAndroid/1.0.2")
             val status = connection.responseCode
             if (status != 200) throw ApiException(status)
             connection.inputStream.use { input ->

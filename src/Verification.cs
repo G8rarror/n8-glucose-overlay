@@ -91,6 +91,7 @@ namespace N8
                 Check(rising.ForecastLow < rising.Forecast && rising.Forecast < rising.ForecastHigh && rising.ForecastHigh - rising.ForecastLow < 70, "Range brackets the estimate and stays reasonable");
                 Check(rising.Rate > 1.6 && rising.Rate < 2.2, "Filtered rate near 2 mg/dL/min");
                 Check(rising.ForecastText(true) != null && rising.DeltaText(true) == "+0.6" && rising.RangeText(true).Contains("–"), "Delta and range convert to mmol/L");
+                Check(System.Text.RegularExpressions.Regex.IsMatch(rising.EstimateText(false), @"\Aest\. ~\d+ \(\d+–\d+\) in 20m\z"), "Estimate shows the middle first, then the range");
                 var falling = Reading.Parse(series(new[] { 60, 75, 90, 105, 120 }, 5), now);
                 Check(falling.DeltaText(false) == "-15" && falling.ForecastText(false) == "<40" && falling.RangeText(false).StartsWith("<40"), "Projection below CGM range shown as <40");
                 Check(falling.LowInMinutes == null, "No low notice once already below 70");

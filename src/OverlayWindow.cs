@@ -182,9 +182,8 @@ namespace N8
                 string unit = s.Mmol ? "mmol/L" : "mg/dL";
                 string delta = r == null || stale ? null : r.DeltaText(s.Mmol);
                 Text(g, delta == null ? unit : unit + "   " + delta + " / 5m", 20, 103, 10, FontStyle.Regular, Color.FromArgb(202, 216, 227), 160, 18);
-                string range = r == null || stale ? null : r.RangeText(s.Mmol);
-                string estimate = range != null ? "est. " + range + " in " + Reading.ForecastMinutes + "m" : (r != null && !stale && r.Noisy ? "est. — noisy readings" : null);
-                if (estimate != null) Text(g, estimate, 166, 103, 10, FontStyle.Regular, Color.FromArgb(160, 178, 192), 156, 18, StringAlignment.Far);
+                string estimate = r == null || stale ? null : r.EstimateText(s.Mmol);
+                if (estimate != null) Text(g, estimate, 120, 103, 10, FontStyle.Regular, Color.FromArgb(160, 178, 192), 202, 18, StringAlignment.Far);
                 // Insulin row: Gluroo's IOB, and how old the newest pump data behind it is.
                 var amber = Color.FromArgb(255, 205, 112);
                 bool iobShown = state.Insulin != null && state.Insulin.IsShowable(now);
