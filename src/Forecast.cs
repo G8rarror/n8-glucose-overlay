@@ -45,6 +45,8 @@ namespace N8
             public double LowEdgeZ = 0;
             /// <summary>Width of the shown range in standard deviations (1.8 gave 80% coverage in the 7-day backtest; 1.28 would if the model were perfectly calibrated).</summary>
             public double RangeZ = 1.8;
+            /// <summary>Show the estimate fitted to her history (LearnedEstimate) instead of the damped trend's; notices are unaffected.</summary>
+            public bool Learned = true;
             public Options Copy() { return (Options)MemberwiseClone(); }
         }
         public static readonly Options Default = new Options();
@@ -92,6 +94,8 @@ namespace N8
             double mean, sd;
             Project(g, v, pgg, pgv, pvv, Reading.ForecastMinutes, scale, o, out mean, out sd);
             newest.Forecast = mean; newest.ForecastLow = mean - o.RangeZ * sd; newest.ForecastHigh = mean + o.RangeZ * sd;
+            // The fitted estimate leans toward 120, partly because lows get treated; when the damped trend projects a low, show the damped trend so the number never reads calmer than the low notice.
+            if (o.Learned && mean >= LowThreshold) { double mid, low, high; LearnedEstimate.Estimate(window, v, scale, out mid, out low, out high); newest.Forecast = mid; newest.ForecastLow = low; newest.ForecastHigh = high; }
             if (!o.OriginalLowRule)
                 newest.LowNow = (newest.Mgdl <= LowThreshold && v <= 0) || (newest.Mgdl <= CheckBelow && v <= o.LowWarnRate);
             for (int h = 1; h <= ThresholdHorizon; h++)

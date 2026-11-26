@@ -88,7 +88,7 @@ namespace N8
                 Check(rising.Delta == 10 && rising.DeltaText(false) == "+10", "Delta is change since previous reading");
                 Check(rising.LinearForecast.HasValue && Math.Abs(rising.LinearForecast.Value - 170) < 0.01, "Straight line: steady rise of 2 mg/dL/min projects +40 in 20 minutes");
                 Check(rising.Forecast > 145 && rising.Forecast < 170, "Damped trend projects less than the straight line on a steady rise");
-                Check(rising.ForecastLow < rising.Forecast && rising.Forecast < rising.ForecastHigh && rising.ForecastHigh - rising.ForecastLow < 70, "Range brackets the estimate and stays reasonable");
+                Check(rising.ForecastLow < rising.Forecast && rising.Forecast < rising.ForecastHigh && rising.ForecastHigh - rising.ForecastLow < 90, "Range brackets the estimate and stays reasonable (fitted: about 80 wide at 2+ mg/dL/min)");
                 Check(rising.Rate > 1.6 && rising.Rate < 2.2, "Filtered rate near 2 mg/dL/min");
                 Check(rising.ForecastText(true) != null && rising.DeltaText(true) == "+0.6" && rising.RangeText(true).Contains("–"), "Delta and range convert to mmol/L");
                 Check(System.Text.RegularExpressions.Regex.IsMatch(rising.EstimateText(false), @"\Aest\. ~\d+ \(\d+–\d+\) in 20m\z"), "Estimate shows the middle first, then the range");
@@ -104,7 +104,7 @@ namespace N8
                 var noisy = Reading.Parse(series(new[] { 100, 140, 95, 135 }, 5), now);
                 Check(noisy.Forecast == null && noisy.LinearForecast == null && noisy.Noisy, "Noisy trace suppresses forecast and is flagged");
                 var flat80 = Reading.Parse(series(new[] { 80, 80, 81, 80, 79, 80 }, 5), now);
-                Check(flat80.LowInMinutes == null && flat80.HighInMinutes == null && flat80.Forecast > 75 && flat80.Forecast < 85, "Flat at 80: no threshold notice");
+                Check(flat80.LowInMinutes == null && flat80.HighInMinutes == null && flat80.Forecast > 78 && flat80.Forecast < 95, "Flat at 80: no threshold notice; fitted estimate drifts up slightly");
                 var slide = Reading.Parse(series(new[] { 95, 100, 105, 110, 115, 120 }, 5), now);
                 Check(slide.LowInMinutes == null && !slide.LowNow, "Gentle 1 mg/dL/min drift from 95 gives no notice (backtest: mostly false alarms)");
                 var drop = Reading.Parse(series(new[] { 105, 120, 135, 150, 165, 180 }, 5), now);
@@ -119,7 +119,15 @@ namespace N8
                 Check(!easing.Noisy && easing.Forecast > 70 && easing.Forecast < 100, "A fast fall that is easing is not mistaken for noise");
                 var smooth = Reading.Parse(series(new[] { 100, 110, 120, 130, 140, 150 }, 5), now);
                 var uneven = Reading.Parse(series(new[] { 100, 100, 111, 111, 128, 150 }, 5), now);
-                Check(!uneven.Noisy && uneven.Forecast != null && uneven.ForecastHigh - uneven.ForecastLow > smooth.ForecastHigh - smooth.ForecastLow, "Uneven fall keeps the estimate with a wider range");
+                double m1, l1, h1, m4, l4, h4;
+                var unevenWindow = Reading.ParseAll(series(new[] { 100, 100, 111, 111, 128, 150 }, 5), now);
+                LearnedEstimate.Estimate(unevenWindow, -2, 1, out m1, out l1, out h1); LearnedEstimate.Estimate(unevenWindow, -2, 4, out m4, out l4, out h4);
+                Check(!uneven.Noisy && uneven.Forecast != null && m1 == m4 && h4 - l4 > 1.9 * (h1 - l1), "Uneven fall keeps the estimate; rough readings widen the range");
+                var steady = Reading.Parse(series(new[] { 120, 120, 120, 120, 120, 120 }, 5), now);
+                Check(steady.Forecast > 118 && steady.Forecast < 128 && steady.ForecastLow < 105 && steady.ForecastHigh > 135, "Fitted estimate: flat at 120 stays near 120 with a range of about -19 to +22");
+                var dampedOnly = TrendModel.Default.Copy(); dampedOnly.Learned = false;
+                var highFlat = Reading.Parse(series(new[] { 260, 260, 260, 260, 260, 260 }, 5), now);
+                Check(highFlat.Forecast < 255 && Reading.AnalyzeNewest(Reading.ParseAll(series(new[] { 260, 260, 260, 260, 260, 260 }, 5), now), dampedOnly).Forecast > 259, "Fitted estimate expects a flat high to come down; the damped trend alone does not");
                 var logLines = new List<string> { ForecastLog.Header };
                 for (int i = 0; i < 40; i++)
                 {

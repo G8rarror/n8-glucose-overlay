@@ -17,7 +17,7 @@ class TrendTest {
         val r = parse(130, 120, 110, 100, 90, 80)
         assertEquals(10.0, r.delta!!, 1e-9)
         assertTrue(r.forecast!! > 145 && r.forecast!! < 170)
-        assertTrue(r.forecastLow!! < r.forecast!! && r.forecast!! < r.forecastHigh!! && r.forecastHigh!! - r.forecastLow!! < 70)
+        assertTrue(r.forecastLow!! < r.forecast!! && r.forecast!! < r.forecastHigh!! && r.forecastHigh!! - r.forecastLow!! < 90)
         assertTrue(r.rate!! > 1.6 && r.rate!! < 2.2)
         assertEquals("+10 / 5m", Format.delta(r, false))
         assertTrue(Format.estimate(r, true)!!.contains("–"))
@@ -39,11 +39,30 @@ class TrendTest {
     @Test fun easingFallIsNotNoise() {
         val r = parse(100, 104, 112, 124, 138, 154)
         assertTrue(!r.noisy && r.forecast!! > 70 && r.forecast!! < 100)
-        // Uneven fall (repeated values, then catch-up jumps): estimate kept, range wider than for a smooth fall.
-        val smooth = parse(100, 110, 120, 130, 140, 150)
+        // Uneven fall (repeated values, then catch-up jumps): estimate kept; rough readings widen the range.
         val uneven = parse(100, 100, 111, 111, 128, 150)
         assertTrue(!uneven.noisy && uneven.forecast != null)
-        assertTrue(uneven.forecastHigh!! - uneven.forecastLow!! > smooth.forecastHigh!! - smooth.forecastLow!!)
+        val w = Reading.parse(series(intArrayOf(100, 100, 111, 111, 128, 150), 5), now)!!
+        val window = listOf(100, 100, 111, 111, 128, 150).mapIndexed { i, v -> Reading(v, now - i * 300_000L, null) }
+        val (m1, l1, h1) = LearnedEstimate.estimate(window, -2.0, 1.0)
+        val (m4, l4, h4) = LearnedEstimate.estimate(window, -2.0, 4.0)
+        assertTrue(w.forecast != null && m1 == m4 && h4 - l4 > 1.9 * (h1 - l1))
+    }
+
+    @Test fun fittedEstimateMatchesPc() {
+        val steady = parse(120, 120, 120, 120, 120, 120)
+        assertTrue(steady.forecast!! > 118 && steady.forecast!! < 128 && steady.forecastLow!! < 105 && steady.forecastHigh!! > 135)
+        assertTrue(parse(260, 260, 260, 260, 260, 260).forecast!! < 255)
+        val flat80 = parse(80, 80, 81, 80, 79, 80)
+        assertTrue(flat80.forecast!! > 78 && flat80.forecast!! < 95)
+        // Exact values from the Windows build (src/Learned.cs), so both apps show the same numbers.
+        for ((values, expected) in listOf(
+            intArrayOf(130, 120, 110, 100, 90, 80) to doubleArrayOf(149.8555, 112.6555, 194.1555),
+            intArrayOf(150, 147, 141, 138, 132, 128) to doubleArrayOf(157.1835, 137.5835, 183.0835),
+            intArrayOf(96, 101, 108, 112, 118, 121) to doubleArrayOf(91.9583, 69.1583, 127.1583))) {
+            val r = Reading.parse(series(values, 5), now)!!
+            assertEquals(expected[0], r.forecast!!, 1e-3); assertEquals(expected[1], r.forecastLow!!, 1e-3); assertEquals(expected[2], r.forecastHigh!!, 1e-3)
+        }
     }
 
     @Test fun thresholds() {

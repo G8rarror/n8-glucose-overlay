@@ -36,7 +36,8 @@ namespace N8
             Func<string, Action<TrendModel.Options>, Variant> v = (name, change) => { var opt = d.Copy(); change(opt); return new Variant { Name = name, Options = opt }; };
             return new List<Variant>
             {
-                v("Before backtest (low edge, uncapped, z 1.28)", x => { x.LowEdgeZ = TrendModel.Z80; x.MaxScale = double.MaxValue; x.RangeZ = TrendModel.Z80; }),
+                v("Before backtest (low edge, uncapped, z 1.28)", x => { x.LowEdgeZ = TrendModel.Z80; x.MaxScale = double.MaxValue; x.RangeZ = TrendModel.Z80; x.Learned = false; }),
+                v("Damped-trend estimate (before fit)", x => x.Learned = false),
                 v("Current defaults", x => { }),
                 v("Defaults + 5 min lag in fast falls", x => x.LagMinutes = 5),
                 v("Defaults + look ahead 20 min", x => x.LowHorizon = 20),

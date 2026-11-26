@@ -153,12 +153,72 @@ object TrendModel {
         }
         val (mean, sd) = project(Reading.FORECAST_MINUTES.toDouble())
         newest.forecast = mean; newest.forecastLow = mean - RANGE_Z * sd; newest.forecastHigh = mean + RANGE_Z * sd
+        // The fitted estimate leans toward 120, partly because lows get treated; when the damped trend projects a low,
+        // keep the damped trend so the number never reads calmer than the low notice.
+        if (mean >= LOW_THRESHOLD) {
+            val (mid, low, high) = LearnedEstimate.estimate(window, v, scale)
+            newest.forecast = mid; newest.forecastLow = low; newest.forecastHigh = high
+        }
         newest.lowNow = (newest.mgdl <= LOW_THRESHOLD && v <= 0) || (newest.mgdl <= CHECK_BELOW && v <= LOW_WARN_RATE)
         for (h in 1..THRESHOLD_HORIZON) {
             val (m, s) = project(h.toDouble())
             if (newest.lowInMinutes == null && !newest.lowNow && v <= LOW_WARN_RATE && m - LOW_EDGE_Z * s <= LOW_THRESHOLD) newest.lowInMinutes = h
             if (newest.highInMinutes == null && newest.mgdl < HIGH_THRESHOLD && v > 0 && m >= HIGH_THRESHOLD) newest.highInMinutes = h
         }
+    }
+}
+
+/**
+ * The shown 20-minute estimate and range, fitted to 30 days of her readings (same as src/Learned.cs on the PC; keep in step).
+ * Out-of-sample average miss 16.6 mg/dL versus 18.4 for the damped trend. No "lows bounce back" term on purpose.
+ * Low and high notices stay with the damped trend.
+ */
+object LearnedEstimate {
+    private const val INTERCEPT = 3.2571
+    private const val RATE = 7.7801
+    private const val RATE_SQUARED = -1.8074
+    private const val CURVATURE = -1.6791
+    private const val LAST_STEP = 2.9796
+    private const val LEVEL = -12.6265
+    private const val ABOVE_HIGH = 10.8305
+    private const val RATE_TIMES_LEVEL = -0.2176
+    /** 10th and 90th percentile misses by speed: under 0.5, 0.5-1, 1-2, 2+ mg/dL/min. */
+    private val LOW_10 = doubleArrayOf(-18.6, -19.6, -22.8, -37.2)
+    private val HIGH_90 = doubleArrayOf(21.6, 25.9, 35.2, 44.3)
+
+    /** window newest first and contiguous; rate from the Kalman filter; roughness widens the range. */
+    fun estimate(window: List<Reading>, rate: Double, roughness: Double): Triple<Double, Double, Double> {
+        val newest = window[0]
+        val g = newest.mgdl.toDouble()
+        val lastStep = if (window.size > 1) (newest.mgdl - window[1].mgdl) / maxOf(1.0, (newest.time - window[1].time) / 60_000.0) else rate
+        val change = INTERCEPT + RATE * rate + RATE_SQUARED * rate * kotlin.math.abs(rate) / 2 + CURVATURE * bend(window) * 10 + LAST_STEP * lastStep +
+            LEVEL * (g - 120) / 100 + ABOVE_HIGH * maxOf(0.0, g - 200) / 100 + RATE_TIMES_LEVEL * rate * (g - 120) / 100
+        val mid = g + change
+        val speed = kotlin.math.abs(rate)
+        val b = if (speed < 0.5) 0 else if (speed < 1) 1 else if (speed < 2) 2 else 3
+        val widen = sqrt(maxOf(1.0, roughness))
+        return Triple(mid, mid + LOW_10[b] * widen, mid + HIGH_90[b] * widen)
+    }
+
+    /** Second derivative (mg/dL/min²) of a least-squares quadratic; 0 with under 4 readings or under 15 minutes. */
+    fun bend(window: List<Reading>): Double {
+        val newest = window[0]
+        val n = minOf(window.size, 6)
+        if (n < 4 || (newest.time - window[n - 1].time) / 60_000.0 < 14.5) return 0.0
+        val a = Array(3) { DoubleArray(4) }
+        for (m in 0 until n) {
+            val x = (window[m].time - newest.time) / 60_000.0
+            val p = doubleArrayOf(1.0, x, x * x)
+            for (r in 0 until 3) { a[r][3] += p[r] * window[m].mgdl; for (c in 0 until 3) a[r][c] += p[r] * p[c] }
+        }
+        for (c in 0 until 3) {
+            var piv = c
+            for (r in c + 1 until 3) if (kotlin.math.abs(a[r][c]) > kotlin.math.abs(a[piv][c])) piv = r
+            if (kotlin.math.abs(a[piv][c]) < 1e-12) return 0.0
+            val t = a[c]; a[c] = a[piv]; a[piv] = t
+            for (r in c + 1 until 3) { val f = a[r][c] / a[c][c]; for (k in c until 4) a[r][k] -= f * a[c][k] }
+        }
+        return 2 * a[2][3] / a[2][2]
     }
 }
 
