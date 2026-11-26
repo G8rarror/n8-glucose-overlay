@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_description">Glucose, trend, 20-minute estimate and insulin on board from Gluroo (read-only).</string>
+</resources>
