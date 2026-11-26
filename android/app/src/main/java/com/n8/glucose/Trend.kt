@@ -18,6 +18,8 @@ class Reading(val mgdl: Int, val time: Long, val direction: String?) {
     var noisy = false
     var lowInMinutes: Int? = null
     var highInMinutes: Int? = null
+    /** CGM low or near low and still falling: the real level may already be lower (sensor lag). */
+    var lowNow = false
 
     val arrow: String get() = when (direction) {
         "DoubleUp" -> "↑↑"; "SingleUp" -> "↑"; "FortyFiveUp" -> "↗"; "Flat" -> "→"
@@ -105,6 +107,11 @@ object TrendModel {
     const val HIGH_THRESHOLD = 250
     const val THRESHOLD_HORIZON = 30
     const val LOW_WARN_RATE = -0.5
+    /** Backtest-chosen defaults, matching TrendModel.Options in the Windows overlay. */
+    const val MAX_SCALE = 4.0
+    const val RANGE_Z = 1.8
+    const val LOW_EDGE_Z = 0.0
+    const val CHECK_BELOW = 85
 
     fun effectiveMinutes(h: Double) = DAMP_PER_MINUTE * (1 - DAMP_PER_MINUTE.pow(h)) / (1 - DAMP_PER_MINUTE)
 
@@ -137,7 +144,7 @@ object TrendModel {
         // Rougher readings than expected widen the range instead of hiding the estimate; hide only when chaotic.
         val roughness = nis / updates
         if (roughness > NOISY_LIMIT) { newest.noisy = true; return }
-        val scale = maxOf(1.0, roughness)
+        val scale = minOf(MAX_SCALE, maxOf(1.0, roughness))
         pgg *= scale; pgv *= scale; pvv *= scale
         fun project(h: Double): Pair<Double, Double> {
             val k = effectiveMinutes(h)
@@ -145,10 +152,11 @@ object TrendModel {
             return Pair(g + v * k, sqrt(maxOf(0.0, variance)))
         }
         val (mean, sd) = project(Reading.FORECAST_MINUTES.toDouble())
-        newest.forecast = mean; newest.forecastLow = mean - Z80 * sd; newest.forecastHigh = mean + Z80 * sd
+        newest.forecast = mean; newest.forecastLow = mean - RANGE_Z * sd; newest.forecastHigh = mean + RANGE_Z * sd
+        newest.lowNow = (newest.mgdl <= LOW_THRESHOLD && v <= 0) || (newest.mgdl <= CHECK_BELOW && v <= LOW_WARN_RATE)
         for (h in 1..THRESHOLD_HORIZON) {
             val (m, s) = project(h.toDouble())
-            if (newest.lowInMinutes == null && newest.mgdl > LOW_THRESHOLD && v <= LOW_WARN_RATE && m - Z80 * s <= LOW_THRESHOLD) newest.lowInMinutes = h
+            if (newest.lowInMinutes == null && !newest.lowNow && v <= LOW_WARN_RATE && m - LOW_EDGE_Z * s <= LOW_THRESHOLD) newest.lowInMinutes = h
             if (newest.highInMinutes == null && newest.mgdl < HIGH_THRESHOLD && v > 0 && m >= HIGH_THRESHOLD) newest.highInMinutes = h
         }
     }
@@ -181,7 +189,8 @@ object Format {
 
     fun threshold(r: Reading, mmol: Boolean): String? {
         fun t(x: Int) = if (mmol) "%.1f".format(java.util.Locale.ROOT, x / MMOL) else x.toString()
-        r.lowInMinutes?.let { return "Below ${t(TrendModel.LOW_THRESHOLD)} possible in ~${it}m · estimate" }
+        if (r.lowNow) return "Low possible now · check finger stick"
+        r.lowInMinutes?.let { return "Heading below ${t(TrendModel.LOW_THRESHOLD)} in ~${it}m · estimate" }
         r.highInMinutes?.let { return "Above ${t(TrendModel.HIGH_THRESHOLD)} likely in ~${it}m · estimate" }
         return null
     }

@@ -182,8 +182,9 @@ namespace N8
                 string unit = s.Mmol ? "mmol/L" : "mg/dL";
                 string delta = r == null || stale ? null : r.DeltaText(s.Mmol);
                 Text(g, delta == null ? unit : unit + "   " + delta + " / 5m", 20, 103, 10, FontStyle.Regular, Color.FromArgb(202, 216, 227), 160, 18);
-                string forecast = r == null || stale ? null : r.ForecastText(s.Mmol);
-                if (forecast != null) Text(g, "est. " + forecast + " in " + Reading.ForecastMinutes + "m", 180, 103, 10, FontStyle.Regular, Color.FromArgb(160, 178, 192), 142, 18, StringAlignment.Far);
+                string range = r == null || stale ? null : r.RangeText(s.Mmol);
+                string estimate = range != null ? "est. " + range + " in " + Reading.ForecastMinutes + "m" : (r != null && !stale && r.Noisy ? "est. — noisy readings" : null);
+                if (estimate != null) Text(g, estimate, 166, 103, 10, FontStyle.Regular, Color.FromArgb(160, 178, 192), 156, 18, StringAlignment.Far);
                 // Insulin row: Gluroo's IOB, and how old the newest pump data behind it is.
                 var amber = Color.FromArgb(255, 205, 112);
                 bool iobShown = state.Insulin != null && state.Insulin.IsShowable(now);
@@ -197,7 +198,8 @@ namespace N8
                 Text(g, age, 20, 150, 9, FontStyle.Regular, Color.FromArgb(227, 235, 242), 303, 18);
                 string status = !s.Locked ? "MOVE MODE · drag here · Ctrl+Alt+G to lock" : state.Status;
                 if (stale && s.Locked) status = "STALE · last known reading · " + state.Status;
-                Text(g, status, 20, 171, 8, FontStyle.Regular, accent, 301, 17);
+                string threshold = r == null || stale || state.Error || !s.Locked ? null : r.ThresholdText(s.Mmol);
+                Text(g, threshold ?? status, 20, 171, 8, threshold != null ? FontStyle.Bold : FontStyle.Regular, threshold != null ? amber : accent, 301, 17);
             }
             return bitmap;
         }

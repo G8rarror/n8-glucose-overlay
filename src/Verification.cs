@@ -86,17 +86,58 @@ namespace N8
                 };
                 var rising = Reading.Parse(series(new[] { 130, 120, 110, 100, 90, 80 }, 5), now);
                 Check(rising.Delta == 10 && rising.DeltaText(false) == "+10", "Delta is change since previous reading");
-                Check(rising.Forecast.HasValue && Math.Abs(rising.Forecast.Value - 170) < 0.01 && rising.ForecastText(false) == "170", "Steady rise of 2 mg/dL/min projects +40 in 20 minutes");
-                Check(rising.ForecastText(true) == "9.4" && rising.DeltaText(true) == "+0.6", "Delta and forecast convert to mmol/L");
+                Check(rising.LinearForecast.HasValue && Math.Abs(rising.LinearForecast.Value - 170) < 0.01, "Straight line: steady rise of 2 mg/dL/min projects +40 in 20 minutes");
+                Check(rising.Forecast > 145 && rising.Forecast < 170, "Damped trend projects less than the straight line on a steady rise");
+                Check(rising.ForecastLow < rising.Forecast && rising.Forecast < rising.ForecastHigh && rising.ForecastHigh - rising.ForecastLow < 70, "Range brackets the estimate and stays reasonable");
+                Check(rising.Rate > 1.6 && rising.Rate < 2.2, "Filtered rate near 2 mg/dL/min");
+                Check(rising.ForecastText(true) != null && rising.DeltaText(true) == "+0.6" && rising.RangeText(true).Contains("–"), "Delta and range convert to mmol/L");
                 var falling = Reading.Parse(series(new[] { 60, 75, 90, 105, 120 }, 5), now);
-                Check(falling.DeltaText(false) == "-15" && falling.ForecastText(false) == "<40", "Projection below CGM range shown as <40");
+                Check(falling.DeltaText(false) == "-15" && falling.ForecastText(false) == "<40" && falling.RangeText(false).StartsWith("<40"), "Projection below CGM range shown as <40");
+                Check(falling.LowInMinutes == null, "No low notice once already below 70");
                 Check(Reading.Parse(series(new[] { 100, 100, 100, 100 }, 5), now).DeltaText(false) == "+0", "Flat delta");
                 Check(Reading.Parse(series(new[] { 110, 100 }, 10), now).Delta == 5, "Delta normalized to 5 minutes across a missed reading");
                 var gapped = Reading.Parse(series(new[] { 110, 100 }, 15), now);
-                Check(gapped.Delta == null && gapped.Forecast == null, "No delta or forecast across a long gap");
+                Check(gapped.Delta == null && gapped.Forecast == null && gapped.LinearForecast == null, "No delta or forecast across a long gap");
                 Check(Reading.Parse(series(new[] { 110, 105 }, 5), now).Forecast == null, "Forecast needs at least three readings over ten minutes");
                 Check(Reading.Parse("[{\"sgv\":110,\"date\":" + ms + "},{\"sgv\":105,\"date\":" + (ms - 600000) + "},{\"sgv\":100,\"date\":" + (ms - 1500000) + "}]", now).Forecast == null, "Forecast window stops at a gap over 7.5 minutes");
-                Check(Reading.Parse(series(new[] { 100, 140, 95, 135 }, 5), now).Forecast == null, "Noisy trace suppresses forecast");
+                var noisy = Reading.Parse(series(new[] { 100, 140, 95, 135 }, 5), now);
+                Check(noisy.Forecast == null && noisy.LinearForecast == null && noisy.Noisy, "Noisy trace suppresses forecast and is flagged");
+                var flat80 = Reading.Parse(series(new[] { 80, 80, 81, 80, 79, 80 }, 5), now);
+                Check(flat80.LowInMinutes == null && flat80.HighInMinutes == null && flat80.Forecast > 75 && flat80.Forecast < 85, "Flat at 80: no threshold notice");
+                var slide = Reading.Parse(series(new[] { 95, 100, 105, 110, 115, 120 }, 5), now);
+                Check(slide.LowInMinutes == null && !slide.LowNow, "Gentle 1 mg/dL/min drift from 95 gives no notice (backtest: mostly false alarms)");
+                var drop = Reading.Parse(series(new[] { 105, 120, 135, 150, 165, 180 }, 5), now);
+                Check(drop.LowInMinutes >= 5 && drop.LowInMinutes <= 30 && drop.ThresholdText(false).StartsWith("Heading below 70 in ~"), "Falling 3 mg/dL/min from 105 warns of a coming low");
+                var nearLow = Reading.Parse(series(new[] { 84, 88, 92, 96, 100, 104 }, 5), now);
+                Check(nearLow.LowNow && nearLow.ThresholdText(false) == "Low possible now · check finger stick", "CGM at 84 and falling asks for a finger stick");
+                var risingLow = Reading.Parse(series(new[] { 68, 60, 55, 52 }, 5), now);
+                Check(!risingLow.LowNow && risingLow.LowInMinutes == null, "Recovering from a low gives no notice");
+                var climb = Reading.Parse(series(new[] { 235, 225, 215, 205, 195, 185 }, 5), now);
+                Check(climb.HighInMinutes >= 3 && climb.HighInMinutes <= 15 && climb.LowInMinutes == null && climb.ThresholdText(false).StartsWith("Above 250"), "Climbing 2 mg/dL/min from 235 notes a coming high");
+                var easing = Reading.Parse(series(new[] { 100, 104, 112, 124, 138, 154 }, 5), now);
+                Check(!easing.Noisy && easing.Forecast > 70 && easing.Forecast < 100, "A fast fall that is easing is not mistaken for noise");
+                var smooth = Reading.Parse(series(new[] { 100, 110, 120, 130, 140, 150 }, 5), now);
+                var uneven = Reading.Parse(series(new[] { 100, 100, 111, 111, 128, 150 }, 5), now);
+                Check(!uneven.Noisy && uneven.Forecast != null && uneven.ForecastHigh - uneven.ForecastLow > smooth.ForecastHigh - smooth.ForecastLow, "Uneven fall keeps the estimate with a wider range");
+                var logLines = new List<string> { ForecastLog.Header };
+                for (int i = 0; i < 40; i++)
+                {
+                    // Readings every 5 minutes rising 5 each; every estimate says +15 from now with a range of ±10.
+                    int value = 100 + 5 * i; var t = now.AddMinutes(-200 + 5 * i);
+                    logLines.Add(ForecastLog.Row.Format(new Reading { Mgdl = value, Time = t, Forecast = value + 15, ForecastLow = value + 5, ForecastHigh = value + 25, LinearForecast = value + 25 }));
+                }
+                var score = ForecastLog.Score.From(logLines, now, 7);
+                Check(score.Checked == 36 && score.Compared == 36 && Math.Abs(score.DampedError - 5) < 0.01 && Math.Abs(score.LinearError - 5) < 0.01 && score.InRange == 36, "Forecast log pairs each estimate with the reading 20 minutes later");
+                Check(ForecastLog.Score.From(logLines, now.AddDays(30), 7).Checked == 0, "Forecast log ignores estimates older than the report window");
+                string logRoot = Path.Combine(Path.GetTempPath(), "n8-forecast-test-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    var testLog = new ForecastLog(logRoot);
+                    var withMs = new Reading { Mgdl = 100, Time = new DateTimeOffset(2026, 11, 26, 19, 38, 49, 765, TimeSpan.Zero) };
+                    Check(testLog.Record(withMs) && !testLog.Record(withMs) && !new ForecastLog(logRoot).Record(withMs), "Forecast log writes each reading once, also after restart");
+                    Check(File.ReadAllLines(testLog.FilePath).Length == 2 && File.ReadAllLines(testLog.FilePath)[0] == ForecastLog.Header, "Forecast log has a header and one row");
+                }
+                finally { try { Directory.Delete(logRoot, true); } catch (IOException) { } }
                 var duplicated = Reading.Parse("[{\"sgv\":120,\"date\":" + ms + "},{\"sgv\":120,\"date\":" + (ms - 5000) + "},{\"sgv\":110,\"date\":" + (ms - 300000) + "}]", now);
                 Check(duplicated.Delta == 10, "Duplicate uploads of one reading ignored for delta");
                 Check(Reading.Parse("[{\"sgv\":100,\"date\":" + ms + "}]", now).Delta == null, "Single reading has no delta");
@@ -237,12 +278,16 @@ namespace N8
                 form.Controls.Add(box); form.CreateControl(); box.CreateControl();
                 using (var bitmap = new Bitmap(box.Width, box.Height)) { box.DrawToBitmap(bitmap, new Rectangle(0, 0, box.Width, box.Height)); bitmap.Save(Path.Combine(folder, "treatments-check-sample.png"), ImageFormat.Png); }
             }
-            var state = new DisplayState { Reading = new Reading { Mgdl = 112, Direction = "Flat", Time = now.AddMinutes(-2), Delta = -4, Forecast = 96 }, Status = "Gluroo connected · click-through locked",
+            var state = new DisplayState { Reading = new Reading { Mgdl = 112, Direction = "Flat", Time = now.AddMinutes(-2), Delta = -4, Forecast = 96, ForecastLow = 84, ForecastHigh = 108 }, Status = "Gluroo connected · click-through locked",
                 Insulin = new InsulinStatus { Iob = 1.35, Fetched = now }, PumpData = now.AddMinutes(-23) };
             SaveImage(folder, "overlay-current.png", new Settings(), state, now);
             SaveImage(folder, "overlay-current-mmol.png", new Settings { Mmol = true }, state, now);
             state.PumpData = now.AddMinutes(-88);
             SaveImage(folder, "overlay-pump-late.png", new Settings(), state, now);
+            var keep = state.Reading;
+            state.Reading = new Reading { Mgdl = 92, Direction = "FortyFiveDown", Time = now.AddMinutes(-1), Delta = -5, Forecast = 76, ForecastLow = 63, ForecastHigh = 89, LowInMinutes = 15 };
+            SaveImage(folder, "overlay-low-notice.png", new Settings(), state, now);
+            state.Reading = keep;
             state.PumpData = now.AddMinutes(-23);
             state.Reading.Time = now.AddMinutes(-17); state.Error = true; state.Status = "Connection unavailable · retry scheduled";
             SaveImage(folder, "overlay-stale.png", new Settings(), state, now);

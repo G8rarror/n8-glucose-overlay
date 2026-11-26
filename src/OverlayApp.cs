@@ -31,9 +31,11 @@ namespace N8
         private int generation, seconds;
         private DateTimeOffset demoTime = DateTimeOffset.MinValue;
         private readonly bool quiet;
+        private readonly ForecastLog forecastLog;
         public OverlayApp(string dataRoot, bool demo, bool quietMode)
         {
             quiet = quietMode;
+            forecastLog = new ForecastLog(dataRoot);
             store = new SettingsStore(dataRoot); ratesPath = Path.Combine(dataRoot, "request-limits.json");
             string startupError = null;
             try { Config = store.Load(); }
@@ -59,6 +61,11 @@ namespace N8
                 Overlay.Apply(Config); SavePosition();
             });
             menu.Items.Add("Refresh when allowed", null, async delegate { await TickAsync(); });
+            menu.Items.Add("Forecast accuracy…", null, delegate
+            {
+                MessageBox.Show(forecastLog.Summarize(DateTimeOffset.UtcNow, 7).Report(Config.Mmol) + Environment.NewLine + "Log: " + forecastLog.FilePath,
+                    "N8 · Forecast accuracy", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Exit", null, delegate { ExitThread(); });
             tray = new NotifyIcon { Icon = TrayIcon, Text = "N8 Glucose Overlay", ContextMenuStrip = menu, Visible = true };
@@ -128,7 +135,7 @@ namespace N8
                 if (now - demoTime > TimeSpan.FromSeconds(120))
                 {
                     demoTime = now;
-                    Overlay.State.Reading = new Reading { Mgdl = 112, Direction = "Flat", Time = now.AddSeconds(-35), Delta = 2, Forecast = 120 };
+                    Overlay.State.Reading = new Reading { Mgdl = 112, Direction = "Flat", Time = now.AddSeconds(-35), Delta = 2, Forecast = 120, ForecastLow = 108, ForecastHigh = 132 };
                     Overlay.State.Insulin = new InsulinStatus { Iob = 1.35, Fetched = now };
                     Overlay.State.PumpData = now.AddMinutes(-23);
                 }
@@ -149,6 +156,7 @@ namespace N8
                     var reading = await client.FetchAsync(Config.Server, header, request.Token);
                     if (exiting || generation != currentGeneration) return;
                     policy.Success(); Overlay.State.Accept(reading);
+                    if (reading != null && ReferenceEquals(Overlay.State.Reading, reading)) forecastLog.Record(reading);
                     policy.Schedule(DateTimeOffset.UtcNow, Overlay.State.Reading == null ? (DateTimeOffset?)null : Overlay.State.Reading.Time, Config.PollSeconds);
                     await RefreshIobAsync(currentGeneration);
                 }

@@ -15,10 +15,10 @@ A home-screen widget (plus a small silent notification) showing Gluroo glucose, 
 
 Android 8.0 or newer. The app is installed from an APK file, not the Play Store.
 
-1. Copy `N8-Glucose-Android-1.0.0.apk` to the phone (USB cable, Google Drive, or email to yourself).
+1. Copy `N8-Glucose-Android-1.0.1.apk` to the phone (USB cable, Google Drive, or email to yourself).
 2. Open it on the phone. Android asks to allow installs from that source (Files, Drive, or Gmail); allow it for this install. Google Play Protect may warn that it does not recognise the app; choose **Install anyway**.
 3. Open **N8 Glucose**, enter the Gluroo Nightscout URL (`https://your-id.ns.gluroo.com`) and the **API Secret Token**, and tap **Save and start**. The app makes one test request and reports whether Gluroo accepted it. Allow notifications when asked.
-4. Add the widget: long-press the home screen › **Widgets** › **N8 Glucose**, or tap **Add widget to home screen** in the app. It can be resized.
+4. Add the widget: long-press the home screen â€º **Widgets** â€º **N8 Glucose**, or tap **Add widget to home screen** in the app. It can be resized.
 5. On phones that close background apps aggressively (Samsung, Xiaomi, OnePlus and others), tap **Battery settings for N8 Glucose** and set battery use to **Unrestricted**.
 
 It restarts itself after a reboot. **Stop** pauses it; **Forget connection** removes the URL and token from the phone. Uninstall like any app.
@@ -30,8 +30,9 @@ It restarts itself after a reboot. **Stop** pauses it; **Forget connection** rem
 | `CURRENT` (teal) | Latest reading is under 10 minutes old. |
 | `STALE` (amber) | Latest reading is 10 minutes old or more; estimate and change are hidden. |
 | `OFFLINE` (red) | The last request failed; the line below says why. |
-| `est. 150–175 in 20m` | Damped-trend estimate with an 80% range. `est. — noisy readings` when readings jump around. |
-| `Below 70 possible in ~15m · estimate` | Amber notice when the low edge of the range reaches 70 within 30 minutes while falling. Not an alarm. |
+| `est. 150â€“200 in 20m` | Damped-trend estimate with a range that held the actual reading about 80% of the time in a 7-day backtest. `est. â€” noisy readings` when readings are chaotic. |
+| `Heading below 70 in ~15m Â· estimate` | Amber notice when the estimate reaches 70 within 30 minutes while falling. Not an alarm. |
+| `Low possible now Â· check finger stick` | CGM at or below 85 and falling (or at or below 70 and not rising): in a fast fall the real level can be well below the CGM. |
 | `IOB 1.35 u` | Gluroo's insulin on board, hidden once 25 minutes old. Only as current as the pump data in Gluroo (Tandem uploads about hourly). |
 
 ## Build from source

@@ -101,8 +101,20 @@ namespace N8
         public string Direction;
         /// <summary>Change since the previous reading, normalized to mg/dL per 5 minutes. Null without a usable previous reading.</summary>
         public double? Delta;
-        /// <summary>Projected mg/dL ForecastMinutes after this reading, from a linear fit of recent readings. Null when history is too short, gapped, or noisy.</summary>
+        /// <summary>Projected mg/dL ForecastMinutes after this reading, from the damped trend (TrendModel). Null when history is too short, gapped, or noisy.</summary>
         public double? Forecast;
+        /// <summary>80% range around Forecast.</summary>
+        public double? ForecastLow, ForecastHigh;
+        /// <summary>The older straight-line projection, kept for comparison in the forecast log; not shown.</summary>
+        public double? LinearForecast;
+        /// <summary>Filtered rate of change, mg/dL per minute.</summary>
+        public double? Rate;
+        /// <summary>Recent readings jump around too much for a trend estimate.</summary>
+        public bool Noisy;
+        /// <summary>Minutes until a low (lower edge of range) or high (estimate) threshold may be crossed, within TrendModel.ThresholdHorizon.</summary>
+        public int? LowInMinutes, HighInMinutes;
+        /// <summary>CGM is low or near low and still falling: the real level may already be lower (sensor lag).</summary>
+        public bool LowNow;
         public const int ForecastMinutes = 20;
         public string Arrow { get { return TrendArrow(Direction); } }
         public static string TrendArrow(string direction)
@@ -138,8 +150,33 @@ namespace N8
             if (f > 400) return mmol ? ">22.2" : ">400";
             return mmol ? (f / 18.0182).ToString("0.0", CultureInfo.InvariantCulture) : Math.Round(f).ToString("0", CultureInfo.InvariantCulture);
         }
+        /// <summary>"150–175", clamped to the 40-400 CGM range. Null without a range.</summary>
+        public string RangeText(bool mmol)
+        {
+            if (ForecastLow == null || ForecastHigh == null) return null;
+            double lo = ForecastLow.Value, hi = ForecastHigh.Value;
+            if (hi < 40) return mmol ? "<2.2" : "<40";
+            if (lo > 400) return mmol ? ">22.2" : ">400";
+            Func<double, string> f = x => mmol ? (x / 18.0182).ToString("0.0", CultureInfo.InvariantCulture) : Math.Round(x).ToString("0", CultureInfo.InvariantCulture);
+            return (lo < 40 ? "<" + f(40) : f(lo)) + "–" + (hi > 400 ? ">" + f(400) : f(hi));
+        }
+        /// <summary>Threshold notice for the status line, or null.</summary>
+        public string ThresholdText(bool mmol)
+        {
+            Func<int, string> f = x => mmol ? (x / 18.0182).ToString("0.0", CultureInfo.InvariantCulture) : x.ToString(CultureInfo.InvariantCulture);
+            if (LowNow) return "Low possible now · check finger stick";
+            if (LowInMinutes != null) return "Heading below " + f(TrendModel.LowThreshold) + " in ~" + LowInMinutes + "m · estimate";
+            if (HighInMinutes != null) return "Above " + f(TrendModel.HighThreshold) + " likely in ~" + HighInMinutes + "m · estimate";
+            return null;
+        }
+        /// <summary>Runs the analysis on readings already in memory (newest first, deduplicated). Used by the backtest.</summary>
+        public static Reading AnalyzeNewest(List<Reading> readings, TrendModel.Options options)
+        {
+            Analyze(readings, options);
+            return readings[0];
+        }
         /// <summary>Fills Delta and Forecast on readings[0] (newest first, deduplicated).</summary>
-        private static void Analyze(List<Reading> readings)
+        private static void Analyze(List<Reading> readings, TrendModel.Options options = null)
         {
             var newest = readings[0];
             if (readings.Count >= 2)
@@ -147,15 +184,12 @@ namespace N8
                 double gap = (newest.Time - readings[1].Time).TotalMinutes;
                 if (gap >= 2.5 && gap <= 10) newest.Delta = (newest.Mgdl - readings[1].Mgdl) * 5.0 / gap;
             }
-            // Contiguous readings within the last 20 minutes of the newest one; any gap over 7.5 minutes ends the window.
-            var window = new List<Reading> { newest };
-            for (int i = 1; i < readings.Count; i++)
-            {
-                if ((window[window.Count - 1].Time - readings[i].Time).TotalMinutes > 7.5) break;
-                if ((newest.Time - readings[i].Time).TotalMinutes > 20.5) break;
-                window.Add(readings[i]);
-            }
-            if (window.Count < 3 || (newest.Time - window[window.Count - 1].Time).TotalMinutes < 9.5) return;
+            // Damped trend over contiguous readings in the last 30 minutes (what is fetched).
+            var trend = Window(readings, 30.5);
+            if (trend != null) TrendModel.Apply(trend, options);
+            // Straight line over the last 20 minutes, kept for comparison.
+            var window = Window(readings, 20.5);
+            if (window == null) return;
             // Least-squares line, x in minutes relative to the newest reading.
             int n = window.Count;
             double sx = 0, sy = 0, sxx = 0, sxy = 0;
@@ -175,7 +209,20 @@ namespace N8
             }
             // A noisy or curving trace makes a straight-line projection misleading, so show nothing.
             if (Math.Sqrt(squares / n) > 6) return;
-            newest.Forecast = intercept + slope * ForecastMinutes;
+            newest.LinearForecast = intercept + slope * ForecastMinutes;
+        }
+        /// <summary>Contiguous readings (gaps of at most 7.5 minutes) within the given minutes of the newest; null if fewer than 3 or spanning under 9.5 minutes.</summary>
+        private static List<Reading> Window(List<Reading> readings, double minutes)
+        {
+            var newest = readings[0];
+            var window = new List<Reading> { newest };
+            for (int i = 1; i < readings.Count; i++)
+            {
+                if ((window[window.Count - 1].Time - readings[i].Time).TotalMinutes > 7.5) break;
+                if ((newest.Time - readings[i].Time).TotalMinutes > minutes) break;
+                window.Add(readings[i]);
+            }
+            return window.Count < 3 || (newest.Time - window[window.Count - 1].Time).TotalMinutes < 9.5 ? null : window;
         }
         public static Reading Parse(string json, DateTimeOffset now)
         {
@@ -213,6 +260,23 @@ namespace N8
                 if (ordered.Count == 0 || (ordered[ordered.Count - 1].Time - r.Time).TotalSeconds >= 30) ordered.Add(r);
             Analyze(ordered);
             return ordered[0];
+        }
+        /// <summary>Every valid reading in a Nightscout entries array, newest first and deduplicated; nothing analysed. Used by the backtest.</summary>
+        public static List<Reading> ParseAll(string json, DateTimeOffset now)
+        {
+            var all = new List<Reading>();
+            object parsed = new JavaScriptSerializer { MaxJsonLength = 64 * 1024 * 1024 }.DeserializeObject(json);
+            var array = parsed as object[];
+            if (array == null) throw new FormatException("Expected a JSON array.");
+            foreach (var item in array)
+            {
+                var single = Parse(new JavaScriptSerializer { MaxJsonLength = 65536 }.Serialize(new[] { item }), now);
+                if (single != null) all.Add(new Reading { Mgdl = single.Mgdl, Time = single.Time, Direction = single.Direction });
+            }
+            var ordered = new List<Reading>();
+            foreach (var r in all.OrderByDescending(r => r.Time))
+                if (ordered.Count == 0 || (ordered[ordered.Count - 1].Time - r.Time).TotalSeconds >= 30) ordered.Add(r);
+            return ordered;
         }
         private static bool TryTime(Dictionary<string, object> entry, out DateTimeOffset time)
         {

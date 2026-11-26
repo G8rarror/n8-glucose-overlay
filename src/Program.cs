@@ -27,6 +27,7 @@ namespace N8
             if (args.Contains("--preview")) return Verification.Preview(args);
             if (args.Contains("--smoke-test")) return Verification.Smoke(args);
             if (args.Contains("--treatments-check")) return TreatmentsCheck.Run(args);
+            if (args.Contains("--backtest")) return Backtest.Run(args);
             bool created;
             using (var mutex = new Mutex(true, MutexName(), out created))
             {

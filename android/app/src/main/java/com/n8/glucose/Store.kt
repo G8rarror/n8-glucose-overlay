@@ -31,7 +31,7 @@ class Snapshot(
             put("mgdl", r.mgdl); put("time", r.time); put("direction", r.direction ?: "")
             r.delta?.let { put("delta", it) }; r.forecast?.let { put("forecast", it) }
             r.forecastLow?.let { put("lo", it) }; r.forecastHigh?.let { put("hi", it) }
-            put("noisy", r.noisy); r.lowInMinutes?.let { put("lowIn", it) }; r.highInMinutes?.let { put("highIn", it) }
+            put("noisy", r.noisy); put("lowNow", r.lowNow); r.lowInMinutes?.let { put("lowIn", it) }; r.highInMinutes?.let { put("highIn", it) }
         }
         iob?.let { put("iob", it) }; put("iobTime", iobTime); put("status", status); put("error", error)
     }.toString()
@@ -69,7 +69,7 @@ object Store {
             val reading = if (o.has("mgdl")) Reading(o.getInt("mgdl"), o.getLong("time"), o.optString("direction").ifEmpty { null }).apply {
                 if (o.has("delta")) delta = o.getDouble("delta"); if (o.has("forecast")) forecast = o.getDouble("forecast")
                 if (o.has("lo")) forecastLow = o.getDouble("lo"); if (o.has("hi")) forecastHigh = o.getDouble("hi")
-                noisy = o.optBoolean("noisy"); if (o.has("lowIn")) lowInMinutes = o.getInt("lowIn"); if (o.has("highIn")) highInMinutes = o.getInt("highIn")
+                noisy = o.optBoolean("noisy"); lowNow = o.optBoolean("lowNow"); if (o.has("lowIn")) lowInMinutes = o.getInt("lowIn"); if (o.has("highIn")) highInMinutes = o.getInt("highIn")
             } else null
             Snapshot(reading, if (o.has("iob")) o.getDouble("iob") else null, o.optLong("iobTime"), o.optString("status"), o.optBoolean("error"))
         } catch (e: Exception) { Snapshot() }
